@@ -1,5 +1,8 @@
 {
   "name": "stream",
+  "engines": {
+    "node": "20.x"
+  },
   "type": "module",
   "private": true,
   "version": "0.0.0",
@@ -19,6 +22,7 @@
     "express": "^5.2.1",
     "fflate": "^0.8.3",
     "groq-sdk": "^1.6.0",
+    "monaco-editor": "^0.55.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
   },
