@@ -28,8 +28,11 @@ import ModelSwitcher from './components/ModelSwitcher'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose } from './lib/ai'
 import { useMobile } from './lib/useMobile'
+import { AuthProvider, useAuth } from './lib/auth'
+import LoginModal from './components/LoginModal'
+import UserMenu from './components/UserMenu'
 
-export default function App() {
+function AppInner() {
   const [files, setFiles] = useState(() => loadFiles())
   const [openTabs, setOpenTabs] = useState(['src/App.jsx'])
   const [activeFile, setActiveFile] = useState('src/App.jsx')
@@ -47,6 +50,8 @@ const [previewSession, setPreviewSession] = useState(null)
 const [testAfterApply, setTestAfterApply] = useState(false)
 const [testProgress, setTestProgress] = useState(null) // null | { step, message } | { done: true }
 const isMobile = useMobile(768)
+const { user, loading: authLoading } = useAuth()
+const [showLogin, setShowLogin] = useState(false)
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -811,6 +816,18 @@ case 'importZip': setShowImport(true); break
   onClick={() => setShowSettings(true)}
   title="Settings"
 >⚙</button>
+
+{user ? (
+  <UserMenu />
+) : (
+  <button
+    className="topbar-btn primary"
+    onClick={() => setShowLogin(true)}
+    title="Sign in"
+  >
+    Sign in
+  </button>
+)}
 </div>
 
       
@@ -1090,6 +1107,18 @@ case 'importZip': setShowImport(true); break
       )}
 
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.msg}</div>}
+
+      {showLogin && (
+        <LoginModal onClose={() => setShowLogin(false)} />
+      )}
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppInner />
+    </AuthProvider>
   )
 }

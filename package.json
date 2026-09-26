@@ -1,7 +1,7 @@
 {
   "name": "stream",
   "engines": {
-    "node": "20.x"
+    "node": ">=20"
   },
   "type": "module",
   "private": true,
@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",
+    "@supabase/supabase-js": "^2.117.2",
     "concurrently": "^10.0.5",
     "cors": "^2.8.6",
     "dotenv": "^18.0.3",
