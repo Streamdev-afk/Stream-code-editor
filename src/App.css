@@ -3744,3 +3744,156 @@
   margin-top: 3px;
   font-style: italic;
 }
+
+/* ============================================================
+   THINKING SWITCHER
+   ============================================================ */
+
+.thinking-switcher {
+  position: relative;
+}
+
+.thinking-btn {
+  display: flex !important;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px !important;
+  padding: 5px 10px !important;
+}
+
+.thinking-caret {
+  font-size: 9px;
+  opacity: 0.6;
+  margin-left: 2px;
+}
+
+/* Thinking icon — colored diamond by level */
+.thinking-icon {
+  font-size: 10px;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.thinking-icon-low {
+  color: #8b949e;
+}
+
+.thinking-icon-medium {
+  color: #58a6ff;
+}
+
+.thinking-icon-high {
+  color: #f778ba;
+}
+
+.thinking-icon-ultra {
+  color: #f0883e;
+  text-shadow: 0 0 8px #f0883e88;
+  animation: thinkingPulse 2s ease-in-out infinite;
+}
+
+@keyframes thinkingPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.6; }
+}
+
+/* Menu */
+.thinking-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 6px;
+  min-width: 280px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6), 0 0 0 1px var(--accent-dim);
+  z-index: 400;
+  animation: menuIn 0.12s ease;
+}
+
+.thinking-menu-header {
+  padding: 6px 10px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+}
+
+.thinking-item {
+  padding: 10px 10px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: background var(--t-fast);
+}
+
+.thinking-item:hover {
+  background: var(--bg-hover);
+}
+
+.thinking-item.active {
+  background: var(--accent-dim);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.thinking-item-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thinking-item-label {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.thinking-cost {
+  font-size: 10.5px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--bg-active);
+  color: var(--text-secondary);
+}
+
+.thinking-cost-fast {
+  background: #8b949e22;
+  color: #8b949e;
+}
+
+.thinking-cost-default {
+  background: #58a6ff22;
+  color: #58a6ff;
+}
+
+.thinking-cost-pro {
+  background: #f778ba22;
+  color: #f778ba;
+}
+
+.thinking-cost-ultra {
+  background: #f0883e22;
+  color: #f0883e;
+  box-shadow: 0 0 8px #f0883e33;
+}
+
+.thinking-item-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  padding-left: 18px;
+  line-height: 1.4;
+}
+
+.thinking-menu-note {
+  padding: 8px 12px 4px;
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-style: italic;
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+}

@@ -1,11 +1,11 @@
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 
-export async function streamEdit({ action, code, selection, language, instruction, model }, onChunk) {
+export async function streamEdit({ action, code, selection, language, instruction, model, thinking }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/edit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, code, selection, language, instruction, model }),
+    body: JSON.stringify({ action, code, selection, language, instruction, model, thinking }),
   })
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -38,11 +38,11 @@ export async function streamEdit({ action, code, selection, language, instructio
 }
 
 // ---------- Agent (multi-file plan, /api/agent) ----------
-export async function streamAgent({ prompt, files, activeFile, history, model }, onChunk) {
+export async function streamAgent({ prompt, files, activeFile, history, model, thinking }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/agent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, files, activeFile, history, model }),
+    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking }),
   })
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

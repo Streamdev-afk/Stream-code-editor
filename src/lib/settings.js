@@ -13,6 +13,7 @@ export const DEFAULT_SETTINGS = {
   theme: 'emerald',     // 'emerald' | 'blue' | 'purple' | 'orange'
   reduceMotion: false,
    model: 'openai/gpt-oss-20b',
+   thinking: 'medium',   // 'low' | 'medium' | 'high' | 'ultra'
 }
 
 export function loadSettings() {
@@ -86,5 +87,36 @@ export const AVAILABLE_MODELS = [
     label: 'Qwen 3.8 27B',
     hint: 'Vision-capable · good balance',
     badge: 'alt',
+  },
+]
+
+export const THINKING_LEVELS = [
+  {
+    id: 'low',
+    label: 'Low',
+    hint: 'Fast · 1× cost',
+    multiplier: 1,
+    badge: 'fast',
+  },
+  {
+    id: 'medium',
+    label: 'Medium',
+    hint: 'Balanced · 2× cost',
+    multiplier: 2,
+    badge: 'default',
+  },
+  {
+    id: 'high',
+    label: 'High',
+    hint: 'Deep thinking · 4× cost',
+    multiplier: 4,
+    badge: 'pro',
+  },
+  {
+    id: 'ultra',
+    label: 'Ultra',
+    hint: 'Maximum effort · 8× cost',
+    multiplier: 8,
+    badge: 'ultra',
   },
 ]

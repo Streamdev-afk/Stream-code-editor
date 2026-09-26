@@ -4,7 +4,7 @@ import cors from 'cors'
 import Groq from 'groq-sdk'
 import crypto from 'crypto'
 import { attachUser } from './auth.js'
-import { checkLimit, recordUsage, getUsage } from './usage.js'
+import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS } from './usage.js'
 
 const app = express()
 
@@ -151,12 +151,14 @@ function buildPreviewHtml(files, activeFile, sessionId) {
 // ============================================================
 
 app.post('/api/chat', async (req, res) => {
-  const limit = checkLimit(req)
+  const { messages, code, language, model, thinking } = req.body
+
+  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
+
+  const limit = checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
-
-  const { messages, code, language, model } = req.body
 
   if (!messages || !Array.isArray(messages)) {
     return res.status(400).json({ error: 'messages required' })
@@ -222,7 +224,7 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
       ],
       stream: true,
       temperature: 0.6,
-      max_tokens: 2048,
+      max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
     })
 
     for await (const chunk of stream) {
@@ -233,7 +235,7 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
     }
 
     res.write('data: [DONE]\n\n')
-    recordUsage(req)
+    recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Groq error:', err)
@@ -243,12 +245,14 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
 })
 
 app.post('/api/edit', async (req, res) => {
-  const limit = checkLimit(req)
+  const { action, code, selection, language, instruction, model, thinking } = req.body
+
+  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
+
+  const limit = checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
-
-  const { action, code, selection, language, instruction, model } = req.body
 
   if (!action) {
     return res.status(400).json({ error: 'action required' })
@@ -325,7 +329,7 @@ Before making changes, understand:
     }
 
     res.write('data: [DONE]\n\n')
-    recordUsage(req)
+    recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Edit error:', err)
@@ -335,12 +339,14 @@ Before making changes, understand:
 })
 
 app.post('/api/agent', async (req, res) => {
-  const limit = checkLimit(req)
+  const { prompt, files, activeFile, history, model, thinking } = req.body
+
+  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
+
+  const limit = checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
-
-  const { prompt, files, activeFile, history, model } = req.body
 
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
@@ -479,8 +485,8 @@ User request: ${prompt}`
       ],
       stream: true,
       temperature: 0.2,
-      max_tokens: 8192,
-      reasoning_effort: 'medium',
+      max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 12288 : 8192,
+      reasoning_effort: thinking === 'ultra' ? 'high' : thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
       response_format: { type: 'json_object' },
     })
 
@@ -489,7 +495,7 @@ User request: ${prompt}`
       if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
     }
     res.write('data: [DONE]\n\n')
-    recordUsage(req)
+    recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Agent error:', err)

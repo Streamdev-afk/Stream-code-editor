@@ -33,6 +33,7 @@ import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import { apiFetch } from './lib/supabase'
 import UsageDropdown from './components/UsageDropdown'
+import ThinkingSwitcher from './components/ThinkingSwitcher'
 
 function AppInner() {
   const [files, setFiles] = useState(() => loadFiles())
@@ -389,7 +390,7 @@ const saveActive = () => {
       let result = ''
       try {
         await streamEdit(
-  { action: 'selection', selection, code: current, language: activeLanguage, instruction, model: settings.model },
+  { action: 'selection', selection, code: current, language: activeLanguage, instruction, model: settings.model, thinking: settings.thinking || 'medium' },
   (chunk) => { result += chunk }
 
         )
@@ -410,7 +411,7 @@ const saveActive = () => {
     let result = ''
     try {
       await streamEdit(
-  { action, code: current, language: activeLanguage, instruction, model: settings.model },
+  { action, code: current, language: activeLanguage, instruction, model: settings.model, thinking: settings.thinking || 'medium' },
   (chunk) => { result += chunk }
 
       )
@@ -780,6 +781,12 @@ case 'importZip': setShowImport(true); break
   disabled={busy}
 />
 
+<ThinkingSwitcher
+  value={settings.thinking || 'medium'}
+  onChange={(t) => setSettings((s) => ({ ...s, thinking: t }))}
+  disabled={busy}
+/>
+
         <button
           className="topbar-btn"
           disabled={!activeFile}
@@ -911,6 +918,8 @@ case 'importZip': setShowImport(true); break
           activeFile={activeFile}
           onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
           model={settings.model}
+          model={settings.model}
+thinking={settings.thinking || 'medium'}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
         />

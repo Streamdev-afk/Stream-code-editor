@@ -3,7 +3,7 @@ import { streamAgent } from '../lib/ai'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 
-export default function AIChat({ code, language, files, activeFile, onApplyPlan, model, testAfterApply, onTestToggle }) {
+export default function AIChat({ code, language, files, activeFile, onApplyPlan, model, thinking, testAfterApply, onTestToggle }) {
   const [mode, setMode] = useState('chat')
   const [messages, setMessages] = useState([
     {
@@ -55,7 +55,7 @@ useEffect(() => {
         res = await apiFetch(`${API_BASE}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: apiMessages, code, language, model }),
+          body: JSON.stringify({ messages: apiMessages, code, language, model, thinking }),
           signal: controller.signal,
         })
       } finally {
@@ -122,7 +122,7 @@ useEffect(() => {
 
     try {
       const plan = await streamAgent(
-  { prompt: text, files, activeFile, history: messages, model },
+  { prompt: text, files, activeFile, history: messages, model, thinking },
   (_chunk, full) => {
           let hint = 'Analyzing project…'
           if (full.length > 200) hint = 'Planning changes…'
