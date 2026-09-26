@@ -1,12 +1,10 @@
+import './env.js'
 import express from 'express'
 import cors from 'cors'
-import dotenv from 'dotenv'
 import Groq from 'groq-sdk'
 import crypto from 'crypto'
 import { attachUser } from './auth.js'
 import { checkLimit, recordUsage, getUsage } from './usage.js'
-
-dotenv.config()
 
 const app = express()
 
@@ -236,7 +234,6 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
 
     res.write('data: [DONE]\n\n')
     recordUsage(req)
-    recordUsage(req)
     res.end()
   } catch (err) {
     console.error('Groq error:', err)
@@ -328,7 +325,6 @@ Before making changes, understand:
     }
 
     res.write('data: [DONE]\n\n')
-    recordUsage(req)
     recordUsage(req)
     res.end()
   } catch (err) {
