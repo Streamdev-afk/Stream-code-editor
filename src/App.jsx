@@ -32,6 +32,7 @@ import { AuthProvider, useAuth } from './lib/auth'
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import { apiFetch } from './lib/supabase'
+import UsageDropdown from './components/UsageDropdown'
 
 function AppInner() {
   const [files, setFiles] = useState(() => loadFiles())
@@ -835,6 +836,8 @@ case 'importZip': setShowImport(true); break
   onClick={() => setShowSettings(true)}
   title="Settings"
 >⚙</button>
+
+<UsageDropdown />
 
 {user ? (
   <UserMenu />

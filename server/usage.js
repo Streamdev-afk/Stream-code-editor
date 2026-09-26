@@ -1,34 +1,49 @@
 /**
- * Simple in-memory usage tracker. Resets on server restart.
- * When we add a database, swap this out for real storage.
+ * In-memory usage tracker with multi-window support.
+ * Currently: 2-week window. Later we'll add a rolling 5-hour window.
+ * Resets on server restart — swap for DB later.
  */
 
-// userId or IP -> { count, tokens, cost, dayStart }
+// key -> { windowStart, count, tokens, cost }
 const usage = new Map()
 
-// Free tier limits
+// Window length in ms
+export const WINDOW_2WEEKS_MS = 14 * 24 * 60 * 60 * 1000
+
+// Tier limits — 2-week window for now
 export const LIMITS = {
   anonymous: {
-    requestsPerDay: 10,
+    requestsPerWindow: 10,
     label: 'Guest',
   },
   free: {
-    requestsPerDay: 100,
+    requestsPerWindow: 500,
     label: 'Free',
   },
-  pro: {
-    requestsPerDay: 2000,
-    label: 'Pro',
+  pro3x: {
+    requestsPerWindow: 1500,
+    label: 'Pro 3×',
+  },
+  pro5x: {
+    requestsPerWindow: 2500,
+    label: 'Pro 5×',
+  },
+  pro10x: {
+    requestsPerWindow: 5000,
+    label: 'Pro 10×',
   },
 }
 
-function todayKey() {
-  return new Date().toISOString().slice(0, 10) // YYYY-MM-DD
+// Thinking-level multipliers (used later when we add thinking levels)
+export const THINKING_MULTIPLIERS = {
+  low: 1,
+  medium: 2,
+  high: 4,
+  ultra: 8,
 }
 
 function getUserKey(req) {
   if (req.isAuth && req.user?.id) return `user:${req.user.id}`
-  // Anonymous — key by IP
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
     || req.socket?.remoteAddress
     || 'unknown'
@@ -37,64 +52,68 @@ function getUserKey(req) {
 
 function getUserTier(req) {
   if (!req.isAuth) return 'anonymous'
-  // Later: check subscription in DB. For now, all logged-in users are 'free'.
+  // Later: check subscription in DB to determine pro tier
   return 'free'
 }
 
+function getOrCreateEntry(key) {
+  const now = Date.now()
+  let entry = usage.get(key)
+  if (!entry || now - entry.windowStart >= WINDOW_2WEEKS_MS) {
+    entry = { windowStart: now, count: 0, tokens: 0, cost: 0 }
+    usage.set(key, entry)
+  }
+  return entry
+}
+
 /**
- * Check if the user can make a request. Returns:
- *   { allowed: true, tier, used, limit }
- *   { allowed: false, tier, used, limit, message }
+ * Check if the user can make a request.
  */
-export function checkLimit(req) {
+export function checkLimit(req, cost = 1) {
   const key = getUserKey(req)
   const tier = getUserTier(req)
   const limit = LIMITS[tier]
-  const today = todayKey()
+  const entry = getOrCreateEntry(key)
 
-  let entry = usage.get(key)
-  if (!entry || entry.day !== today) {
-    entry = { day: today, count: 0, tokens: 0, cost: 0 }
-    usage.set(key, entry)
-  }
+  const remaining = limit.requestsPerWindow - entry.count
 
-  if (entry.count >= limit.requestsPerDay) {
+  if (remaining < cost) {
     return {
       allowed: false,
       tier,
+      tierLabel: limit.label,
       used: entry.count,
-      limit: limit.requestsPerDay,
+      limit: limit.requestsPerWindow,
+      remaining: Math.max(0, remaining),
+      windowStart: entry.windowStart,
+      windowEndsAt: entry.windowStart + WINDOW_2WEEKS_MS,
       message:
         tier === 'anonymous'
-          ? `Guest limit reached (${limit.requestsPerDay}/day). Sign in for more.`
-          : `Daily limit reached (${limit.requestsPerDay}/day). Upgrade for more.`,
+          ? `Guest limit reached (${limit.requestsPerWindow} requests). Sign in for more.`
+          : `Usage limit reached (${limit.requestsPerWindow} requests). Upgrade for more.`,
     }
   }
 
   return {
     allowed: true,
     tier,
+    tierLabel: limit.label,
     used: entry.count,
-    limit: limit.requestsPerDay,
+    limit: limit.requestsPerWindow,
+    remaining,
+    windowStart: entry.windowStart,
+    windowEndsAt: entry.windowStart + WINDOW_2WEEKS_MS,
   }
 }
 
 /**
- * Record a completed request.
+ * Record a completed request. `cost` is the number of units consumed.
  */
-export function recordUsage(req, { tokens = 0, cost = 0 } = {}) {
+export function recordUsage(req, cost = 1, { tokens = 0 } = {}) {
   const key = getUserKey(req)
-  const today = todayKey()
-
-  let entry = usage.get(key)
-  if (!entry || entry.day !== today) {
-    entry = { day: today, count: 0, tokens: 0, cost: 0 }
-    usage.set(key, entry)
-  }
-
-  entry.count += 1
+  const entry = getOrCreateEntry(key)
+  entry.count += cost
   entry.tokens += tokens
-  entry.cost += cost
 }
 
 /**
@@ -104,26 +123,22 @@ export function getUsage(req) {
   const key = getUserKey(req)
   const tier = getUserTier(req)
   const limit = LIMITS[tier]
-  const today = todayKey()
+  const entry = getOrCreateEntry(key)
 
-  const entry = usage.get(key)
-  if (!entry || entry.day !== today) {
-    return {
-      tier,
-      used: 0,
-      limit: limit.requestsPerDay,
-      remaining: limit.requestsPerDay,
-      tokens: 0,
-      cost: 0,
-    }
-  }
+  const used = entry.count
+  const total = limit.requestsPerWindow
+  const remaining = Math.max(0, total - used)
+  const percent = total > 0 ? Math.min(100, Math.round((used / total) * 100)) : 0
 
   return {
     tier,
-    used: entry.count,
-    limit: limit.requestsPerDay,
-    remaining: Math.max(0, limit.requestsPerDay - entry.count),
+    tierLabel: limit.label,
+    used,
+    limit: total,
+    remaining,
+    percent,
     tokens: entry.tokens,
-    cost: entry.cost,
+    windowStart: entry.windowStart,
+    windowEndsAt: entry.windowStart + WINDOW_2WEEKS_MS,
   }
 }
