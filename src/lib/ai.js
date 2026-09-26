@@ -1,7 +1,8 @@
 import { API_BASE } from './api'
+import { apiFetch } from './supabase'
 
 export async function streamEdit({ action, code, selection, language, instruction, model }, onChunk) {
-  const res = await fetch(`${API_BASE}/api/edit`, {
+  const res = await apiFetch(`${API_BASE}/api/edit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action, code, selection, language, instruction, model }),
@@ -38,7 +39,7 @@ export async function streamEdit({ action, code, selection, language, instructio
 
 // ---------- Agent (multi-file plan, /api/agent) ----------
 export async function streamAgent({ prompt, files, activeFile, history, model }, onChunk) {
-  const res = await fetch(`${API_BASE}/api/agent`, {
+  const res = await apiFetch(`${API_BASE}/api/agent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ prompt, files, activeFile, history, model }),
@@ -99,7 +100,7 @@ export async function streamAgent({ prompt, files, activeFile, history, model },
 }
 
 export async function updatePreviewSession({ sessionId, files, activeFile }) {
-  const res = await fetch(`${API_BASE}/api/agent/test`, {
+  const res = await apiFetch(`${API_BASE}/api/agent/test`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, files, activeFile }),
@@ -109,18 +110,18 @@ export async function updatePreviewSession({ sessionId, files, activeFile }) {
 }
 
 export async function fetchPreviewErrors(sessionId) {
-  const res = await fetch(`${API_BASE}/api/preview/errors/${sessionId}`)
+  const res = await apiFetch(`${API_BASE}/api/preview/errors/${sessionId}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const data = await res.json()
   return data.errors || []
 }
 
 export async function clearPreviewErrors(sessionId) {
-  await fetch(`${API_BASE}/api/preview/errors/${sessionId}`, { method: 'DELETE' })
+  await apiFetch(`${API_BASE}/api/preview/errors/${sessionId}`, { method: 'DELETE' })
 }
 
 export async function diagnose({ sessionId, files, activeFile, errors, originalPrompt, attempt, model }) {
-  const res = await fetch(`${API_BASE}/api/agent/diagnose`, {
+  const res = await apiFetch(`${API_BASE}/api/agent/diagnose`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sessionId, files, activeFile, errors, originalPrompt, attempt, model }),

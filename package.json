@@ -23,6 +23,7 @@
     "express": "^5.2.1",
     "fflate": "^0.8.3",
     "groq-sdk": "^1.6.0",
+    "jose": "^6.2.12",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"

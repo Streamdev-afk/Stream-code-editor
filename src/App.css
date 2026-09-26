@@ -3538,3 +3538,12 @@
   width: 16px;
   text-align: center;
 }
+
+.usage-pill {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  background: var(--bg-hover);
+  border-radius: 8px;
+}

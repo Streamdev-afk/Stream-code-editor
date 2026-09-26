@@ -9,10 +9,34 @@ if (!url || !anonKey) {
   )
 }
 
-export const supabase = url && anonKey ? createClient(url, anonKey, {
-  auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-  },
-}) : null
+export const supabase = url && anonKey
+  ? createClient(url, anonKey, {
+      auth: {
+        persistSession: true,
+        autoRefreshToken: true,
+        detectSessionInUrl: true,
+      },
+    })
+  : null
+
+/**
+ * Returns the current session's access token, or null.
+ */
+export async function getAccessToken() {
+  if (!supabase) return null
+  const { data } = await supabase.auth.getSession()
+  return data?.session?.access_token || null
+}
+
+/**
+ * Fetch helper — automatically attaches the Supabase JWT if the user is signed in.
+ */
+export async function apiFetch(url, options = {}) {
+  const token = await getAccessToken()
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(options.headers || {}),
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+  return fetch(url, { ...options, headers })
+}

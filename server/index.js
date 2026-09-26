@@ -3,6 +3,8 @@ import cors from 'cors'
 import dotenv from 'dotenv'
 import Groq from 'groq-sdk'
 import crypto from 'crypto'
+import { attachUser } from './auth.js'
+import { checkLimit, recordUsage, getUsage } from './usage.js'
 
 dotenv.config()
 
@@ -25,6 +27,8 @@ app.use(cors({
   credentials: true,
 }))
 app.use(express.json())
+// Attach user info to every request (auth optional)
+app.use(attachUser)
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -149,6 +153,11 @@ function buildPreviewHtml(files, activeFile, sessionId) {
 // ============================================================
 
 app.post('/api/chat', async (req, res) => {
+  const limit = checkLimit(req)
+  if (!limit.allowed) {
+    return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
+
   const { messages, code, language, model } = req.body
 
   if (!messages || !Array.isArray(messages)) {
@@ -226,6 +235,8 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
     }
 
     res.write('data: [DONE]\n\n')
+    recordUsage(req)
+    recordUsage(req)
     res.end()
   } catch (err) {
     console.error('Groq error:', err)
@@ -235,6 +246,11 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
 })
 
 app.post('/api/edit', async (req, res) => {
+  const limit = checkLimit(req)
+  if (!limit.allowed) {
+    return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
+
   const { action, code, selection, language, instruction, model } = req.body
 
   if (!action) {
@@ -312,6 +328,8 @@ Before making changes, understand:
     }
 
     res.write('data: [DONE]\n\n')
+    recordUsage(req)
+    recordUsage(req)
     res.end()
   } catch (err) {
     console.error('Edit error:', err)
@@ -321,6 +339,11 @@ Before making changes, understand:
 })
 
 app.post('/api/agent', async (req, res) => {
+  const limit = checkLimit(req)
+  if (!limit.allowed) {
+    return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
+
   const { prompt, files, activeFile, history, model } = req.body
 
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
@@ -470,6 +493,7 @@ User request: ${prompt}`
       if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
     }
     res.write('data: [DONE]\n\n')
+    recordUsage(req)
     res.end()
   } catch (err) {
     console.error('Agent error:', err)
@@ -765,6 +789,10 @@ app.get('/preview/:id/*filePath', (req, res) => {
 // ---------- Health check ----------
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, hasKey: !!process.env.GROQ_API_KEY })
+})
+app.get('/api/usage', (req, res) => {
+  const u = getUsage(req)
+  res.json(u)
 })
 
 // ---------- Start server ----------

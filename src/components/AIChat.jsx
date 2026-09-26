@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { streamAgent } from '../lib/ai'
 import { API_BASE } from '../lib/api'
+import { apiFetch } from '../lib/supabase'
 
 export default function AIChat({ code, language, files, activeFile, onApplyPlan, model, testAfterApply, onTestToggle }) {
   const [mode, setMode] = useState('chat')
@@ -51,7 +52,7 @@ useEffect(() => {
 
       let res
       try {
-        res = await fetch(`${API_BASE}/api/chat`, {
+        res = await apiFetch(`${API_BASE}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ messages: apiMessages, code, language, model }),

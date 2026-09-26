@@ -31,6 +31,7 @@ import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
+import { apiFetch } from './lib/supabase'
 
 function AppInner() {
   const [files, setFiles] = useState(() => loadFiles())
@@ -52,6 +53,7 @@ const [testProgress, setTestProgress] = useState(null) // null | { step, message
 const isMobile = useMobile(768)
 const { user, loading: authLoading } = useAuth()
 const [showLogin, setShowLogin] = useState(false)
+const [usage, setUsage] = useState(null)
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -231,6 +233,23 @@ useEffect(() => {
   saveSettings(settings)
   applyTheme(settings.theme)
 }, [settings])
+
+useEffect(() => {
+  const fetchUsage = async () => {
+    try {
+      const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/usage`)
+      if (res.ok) {
+        const data = await res.json()
+        setUsage(data)
+      }
+    } catch (err) {
+      // Silent — usage is a nice-to-have
+    }
+  }
+  fetchUsage()
+  const interval = setInterval(fetchUsage, 30000) // every 30s
+  return () => clearInterval(interval)
+}, [user])
 
   // ---------- File ops ----------
   const openFile = (path) => {
@@ -1033,6 +1052,11 @@ case 'importZip': setShowImport(true); break
         <div className="status-item">
           <span className={`status-accent ${busy ? 'pulse' : ''}`}>●</span> {status}
         </div>
+        {usage && (
+  <div className="status-item" title={`${usage.used}/${usage.limit} requests today`}>
+    {usage.tier === 'anonymous' ? '👤' : '⭐'} {usage.used}/{usage.limit}
+  </div>
+)}
         <div className="status-item">{activeFile || 'No file'}</div>
         <div className="status-item">
           <LanguageSelect value={activeLanguage} onChange={changeLanguage} />
