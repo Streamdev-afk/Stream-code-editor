@@ -9,6 +9,8 @@
 // key -> { shortWindowStart, shortCount, longWindowStart, longCount, tokens }
 const usage = new Map()
 
+import { getUserTier as getUserTierFromDB } from './subscriptions.js'
+
 export const SHORT_WINDOW_MS = 5 * 60 * 60 * 1000          // 5 hours
 export const LONG_WINDOW_MS = 14 * 24 * 60 * 60 * 1000     // 2 weeks
 
@@ -61,16 +63,32 @@ function getUserKey(req) {
   return `ip:${ip}`
 }
 
-function getUserTier(req) {
+
+// Simple cache so we don't hit DB on every request
+const tierCache = new Map() // userId -> { tier, expiresAt }
+const TIER_CACHE_TTL = 30 * 1000 // 30 seconds
+
+async function resolveTier(req) {
   if (!req.isAuth) return 'anonymous'
 
-  // For now, everyone who signs in is 'free'.
-  // Later: check Supabase DB for a subscription tier.
-  // Test hook: set ADMIN_TIER_OVERRIDE=pro10x in .env to force a tier for your user.
+  // Dev override for testing
   const override = process.env.ADMIN_TIER_OVERRIDE
   if (override && TIER_LIMITS[override]) return override
 
-  return 'free'
+  const userId = req.user?.id
+  if (!userId) return 'free'
+
+  const cached = tierCache.get(userId)
+  if (cached && cached.expiresAt > Date.now()) return cached.tier
+
+  try {
+    const tier = await getUserTierFromDB(userId)
+    const normalized = TIER_LIMITS[tier] ? tier : 'free'
+    tierCache.set(userId, { tier: normalized, expiresAt: Date.now() + TIER_CACHE_TTL })
+    return normalized
+  } catch {
+    return 'free'
+  }
 }
 
 // ------------------------------------------------------------
@@ -111,9 +129,9 @@ function getOrCreateEntry(key) {
  * Check if the user can make a request.
  * `cost` is the number of units the request will consume.
  */
-export function checkLimit(req, cost = 1) {
+export async function checkLimit(req, cost = 1) {
   const key = getUserKey(req)
-  const tier = getUserTier(req)
+  const tier = await resolveTier(req)
   const limits = TIER_LIMITS[tier]
   const entry = getOrCreateEntry(key)
 
@@ -199,9 +217,9 @@ export function recordUsage(req, cost = 1, { tokens = 0 } = {}) {
 /**
  * Current usage summary for a request context.
  */
-export function getUsage(req) {
+export async function getUsage(req) {
   const key = getUserKey(req)
-  const tier = getUserTier(req)
+  const tier = await resolveTier(req)
   const limits = TIER_LIMITS[tier]
   const entry = getOrCreateEntry(key)
 

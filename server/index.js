@@ -5,6 +5,19 @@ import Groq from 'groq-sdk'
 import crypto from 'crypto'
 import { attachUser } from './auth.js'
 import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS } from './usage.js'
+import {
+  initializeTransaction,
+  verifyTransaction,
+  disableSubscription,
+  verifyWebhookSignature,
+  isConfigured as paystackConfigured,
+} from './paystack.js'
+import {
+  getSubscription,
+  upsertSubscription,
+  cancelSubscription,
+  isConfigured as subsConfigured,
+} from './subscriptions.js'
 
 const app = express()
 
@@ -24,7 +37,11 @@ app.use(cors({
   },
   credentials: true,
 }))
-app.use(express.json())
+app.use((req, res, next) => {
+  // Webhook needs raw body for signature verification
+  if (req.path === '/api/paystack/webhook') return next()
+  return express.json()(req, res, next)
+})
 // Attach user info to every request (auth optional)
 app.use(attachUser)
 
@@ -155,7 +172,7 @@ app.post('/api/chat', async (req, res) => {
 
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
 
-  const limit = checkLimit(req, thinkingCost)
+  const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
@@ -249,7 +266,7 @@ app.post('/api/edit', async (req, res) => {
 
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
 
-  const limit = checkLimit(req, thinkingCost)
+  const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
@@ -343,7 +360,7 @@ app.post('/api/agent', async (req, res) => {
 
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
 
-  const limit = checkLimit(req, thinkingCost)
+  const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) {
     return res.status(429).json({ error: limit.message, tier: limit.tier })
   }
@@ -788,12 +805,215 @@ app.get('/preview/:id/*filePath', (req, res) => {
   res.send(file.content || '')
 })
 
+// ------------------------------------------------------------
+// Subscriptions (Paystack)
+// ------------------------------------------------------------
+
+// Paystack plan codes — set these in Render env after creating plans in Paystack dashboard
+const PLAN_CODES = {
+  pro3x: process.env.PAYSTACK_PLAN_PRO3X || '',
+  pro5x: process.env.PAYSTACK_PLAN_PRO5X || '',
+  pro10x: process.env.PAYSTACK_PLAN_PRO10X || '',
+}
+
+/**
+ * POST /api/paystack/checkout
+ * Body: { tier: 'pro3x' | 'pro5x' | 'pro10x' }
+ * Requires auth.
+ * Returns { authorizationUrl }.
+ */
+app.post('/api/paystack/checkout', async (req, res) => {
+  if (!req.isAuth || !req.user?.id) {
+    return res.status(401).json({ error: 'Sign in required' })
+  }
+  if (!paystackConfigured()) {
+    return res.status(503).json({ error: 'Payments not configured' })
+  }
+
+  const { tier } = req.body
+  if (!PLAN_CODES[tier]) {
+    return res.status(400).json({ error: `Unknown or unconfigured tier: ${tier}` })
+  }
+
+  const email = req.user.email
+  if (!email) return res.status(400).json({ error: 'No email on account' })
+
+  try {
+    // Paystack amounts in kobo — but when using a plan, amount is ignored.
+    // We still pass it as a fallback.
+    const AMOUNTS = {
+      pro3x: 300000,   // ₦3000 (placeholder — adjust later)
+      pro5x: 500000,   // ₦5000
+      pro10x: 900000,  // ₦9000
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
+
+    const { authorizationUrl, reference } = await initializeTransaction({
+      email,
+      amount: AMOUNTS[tier] || 1000,
+      plan: PLAN_CODES[tier],
+      callbackUrl: `${frontendUrl}/?payment=success`,
+      metadata: {
+        userId: req.user.id,
+        tier,
+      },
+    })
+
+    res.json({
+      authorizationUrl,
+      reference,
+      tier,
+    })
+  } catch (err) {
+    console.error('Paystack checkout error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
+ * GET /api/subscription
+ * Returns the current user's subscription (or null).
+ */
+app.get('/api/subscription', async (req, res) => {
+  if (!req.isAuth || !req.user?.id) {
+    return res.status(401).json({ error: 'Sign in required' })
+  }
+  if (!subsConfigured()) {
+    return res.json({ subscription: null, note: 'Subscriptions not configured' })
+  }
+
+  try {
+    const sub = await getSubscription(req.user.id)
+    res.json({ subscription: sub })
+  } catch (err) {
+    console.error('Get subscription error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
+ * POST /api/subscription/cancel
+ * Cancel the current user's subscription.
+ */
+app.post('/api/subscription/cancel', async (req, res) => {
+  if (!req.isAuth || !req.user?.id) {
+    return res.status(401).json({ error: 'Sign in required' })
+  }
+  if (!subsConfigured()) {
+    return res.status(503).json({ error: 'Subscriptions not configured' })
+  }
+
+  try {
+    const sub = await getSubscription(req.user.id)
+    if (!sub) return res.status(404).json({ error: 'No subscription found' })
+
+    // If we have a Paystack subscription, disable it there first
+    if (sub.paystack_subscription_code && sub.paystack_email_token && paystackConfigured()) {
+      try {
+        await disableSubscription({
+          code: sub.paystack_subscription_code,
+          emailToken: sub.paystack_email_token,
+        })
+      } catch (err) {
+        console.warn('Paystack disable failed (continuing):', err.message)
+      }
+    }
+
+    const updated = await cancelSubscription(req.user.id)
+    res.json({ subscription: updated })
+  } catch (err) {
+    console.error('Cancel subscription error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
+ * POST /api/paystack/webhook
+ * Receives events from Paystack. Must be raw body for signature verification.
+ * Handles: charge.success, subscription.create, subscription.disable, subscription.not_renew
+ */
+app.post(
+  '/api/paystack/webhook',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    // Respond 200 immediately so Paystack doesn't retry while we process
+    res.status(200).send('ok')
+
+    try {
+      const signature = req.headers['x-paystack-signature']
+      const rawBody = req.body.toString('utf8')
+
+      const valid = await verifyWebhookSignature(rawBody, signature)
+      if (!valid) {
+        console.warn('Paystack webhook: invalid signature')
+        return
+      }
+
+      const event = JSON.parse(rawBody)
+      console.log('Paystack webhook:', event.event)
+
+      const data = event.data
+
+      if (event.event === 'charge.success') {
+        const meta = data.metadata || {}
+        const userId = meta.userId
+        const tier = meta.tier
+        if (!userId || !tier) return
+
+        await upsertSubscription(userId, {
+          tier,
+          status: 'active',
+          paystack_customer_code: data.customer?.customer_code || null,
+          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+        })
+      }
+
+      if (event.event === 'subscription.create') {
+        const meta = data.metadata || {}
+        const userId = meta.userId
+        if (!userId) return
+
+        await upsertSubscription(userId, {
+          tier: meta.tier || 'pro3x',
+          status: 'active',
+          paystack_subscription_code: data.subscription_code || null,
+          paystack_email_token: data.email_token || null,
+          current_period_end: data.next_payment_date || null,
+        })
+      }
+
+      if (event.event === 'subscription.disable' || event.event === 'subscription.not_renew') {
+        const meta = data.metadata || {}
+        const userId = meta.userId
+        if (!userId) return
+
+        await upsertSubscription(userId, {
+          status: 'cancelled',
+        })
+      }
+
+      if (event.event === 'invoice.payment_failed') {
+        const meta = data.metadata || {}
+        const userId = meta.userId
+        if (!userId) return
+
+        await upsertSubscription(userId, {
+          status: 'past_due',
+        })
+      }
+    } catch (err) {
+      console.error('Webhook error:', err)
+    }
+  }
+)
+
 // ---------- Health check ----------
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, hasKey: !!process.env.GROQ_API_KEY })
 })
-app.get('/api/usage', (req, res) => {
-  const u = getUsage(req)
+app.get('/api/usage', async (req, res) => {
+  const u = await getUsage(req)
   res.json(u)
 })
 
