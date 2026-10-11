@@ -3,11 +3,12 @@ import express from 'express'
 import cors from 'cors'
 import Groq from 'groq-sdk'
 import crypto from 'crypto'
+import path from 'path'
+import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
 import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS } from './usage.js'
 import {
   initializeTransaction,
-  verifyTransaction,
   disableSubscription,
   verifyWebhookSignature,
   isConfigured as paystackConfigured,
@@ -21,7 +22,6 @@ import {
 
 const app = express()
 
-// Allow localhost during dev + the deployed frontend in production
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:4173',
@@ -37,26 +37,33 @@ app.use(cors({
   },
   credentials: true,
 }))
+
 app.use((req, res, next) => {
-  // Webhook needs raw body for signature verification
   if (req.path === '/api/paystack/webhook') return next()
   return express.json()(req, res, next)
 })
-// Attach user info to every request (auth optional)
+
 app.use(attachUser)
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
-  timeout: 120000,
+  timeout: 300000,
   maxRetries: 1,
 })
 
 // ============================================================
+// esbuild-wasm init
+// ============================================================
+const esbuildReady = true
+console.log('✅ esbuild ready')
+
+// ============================================================
 // IN-MEMORY STATE
 // ============================================================
-
 const previewSessions = new Map()
 const previewErrors = new Map()
+const bundleCache = new Map()
+const BUNDLE_CACHE_MS = 10 * 1000
 
 setInterval(() => {
   const now = Date.now()
@@ -70,7 +77,6 @@ setInterval(() => {
 // ============================================================
 // HELPERS
 // ============================================================
-
 function buildConsoleShim(sessionId) {
   const sessionJson = JSON.stringify(sessionId || '')
   return [
@@ -107,9 +113,48 @@ function buildConsoleShim(sessionId) {
   ].join('\n')
 }
 
+function rewriteHtmlPaths(html, sessionId) {
+  const prefix = `/preview/${sessionId}`
+
+  html = html.replace(
+    /(<link[^>]+href=["'])(?!https?:|\/\/|#|data:)([^"']+)(["'])/gi,
+    (m, before, url, after) => {
+      const clean = url.startsWith('/') ? url.slice(1) : url
+      return `${before}${prefix}/${clean}${after}`
+    }
+  )
+
+  html = html.replace(
+    /(<script[^>]+src=["'])(?!https?:|\/\/)([^"']+)(["'])/gi,
+    (m, before, url, after) => {
+      const clean = url.startsWith('/') ? url.slice(1) : url
+      if (/\.(jsx?|tsx?|mjs)$/i.test(clean)) {
+        return `${before}${prefix}/bundle/${clean}${after}`
+      }
+      return `${before}${prefix}/${clean}${after}`
+    }
+  )
+
+  html = html.replace(
+    /(<img[^>]+src=["'])(?!https?:|\/\/|data:)([^"']+)(["'])/gi,
+    (m, before, url, after) => {
+      const clean = url.startsWith('/') ? url.slice(1) : url
+      return `${before}${prefix}/${clean}${after}`
+    }
+  )
+
+  return html
+}
+
+function stripViteInjections(html) {
+  return html
+    .replace(/<script[^>]*src=["'][^"']*@vite\/client[^"']*["'][^>]*>\s*<\/script>/gi, '')
+    .replace(/<script[^>]*src=["'][^"']*@react-refresh[^"']*["'][^>]*>\s*<\/script>/gi, '')
+    .replace(/<script[^>]*type=["']module["'][^>]*src=["'][^"']*\/src\/main\.[jt]sx?[^"']*["'][^>]*>\s*<\/script>/gi, '')
+}
+
 function buildPreviewHtml(files, activeFile, sessionId) {
   let htmlPath = null
-   
   if (activeFile && files[activeFile] && activeFile.endsWith('.html')) {
     htmlPath = activeFile
   }
@@ -124,106 +169,40 @@ function buildPreviewHtml(files, activeFile, sessionId) {
     ? files[htmlPath].content
     : `<!DOCTYPE html><html><head></head><body><div id="root"></div></body></html>`
 
-      // Strip any Vite dev-server injections that may have leaked into the HTML.
-  // These scripts only work in the Vite dev server and break our preview.
-  html = html
-    .replace(/<script[^>]*src=["'][^"']*@vite\/client[^"']*["'][^>]*>\s*<\/script>/gi, '')
-    .replace(/<script[^>]*src=["'][^"']*@react-refresh[^"']*["'][^>]*>\s*<\/script>/gi, '')
-    .replace(/<script[^>]*type=["']module["'][^>]*src=["'][^"']*\/src\/main\.[jt]sx?[^"']*["'][^>]*>\s*<\/script>/gi, '')
+  html = stripViteInjections(html)
+  html = rewriteHtmlPaths(html, sessionId)
 
-  const cssFiles = Object.entries(files).filter(([p]) => p.endsWith('.css'))
-  const cssBlock = cssFiles.map(([p, f]) => `/* ${p} */\n${f.content}`).join('\n\n')
-
-  const jsFiles = Object.entries(files).filter(
-    ([p]) => (p.endsWith('.js') || p.endsWith('.jsx')) && !p.endsWith('.config.js')
-  )
-  const jsBlock = jsFiles.map(([p, f]) => `// ${p}\n${f.content}`).join('\n\n')
-
-  const hasOwnStructure = /<html[\s>]/i.test(html)
-
-  if (hasOwnStructure) {
-    const shim = buildConsoleShim(sessionId)
-    html = html.includes('</head>')
-      ? html.replace('</head>', `<script>${shim}</script></head>`)
-      : `<script>${shim}</script>${html}`
-    return html
-  }
-
-  if (cssBlock) {
-    html = html.includes('</head>')
-      ? html.replace('</head>', `<style>${cssBlock}</style></head>`)
-      : `<style>${cssBlock}</style>` + html
-  }
-
-  const scriptBlock = `<script>${buildConsoleShim(sessionId)}\n${jsBlock}</script>`
-  html = html.includes('</body>')
-    ? html.replace('</body>', `${scriptBlock}</body>`)
-    : html + scriptBlock
+  const shim = buildConsoleShim(sessionId)
+  html = html.includes('</head>')
+    ? html.replace('</head>', `<script>${shim}</script></head>`)
+    : `<script>${shim}</script>${html}`
 
   return html
 }
 
 // ============================================================
-// API ROUTES
+// AI ENDPOINTS
 // ============================================================
 
 app.post('/api/chat', async (req, res) => {
   const { messages, code, language, model, thinking } = req.body
-
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-
   const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) {
-    return res.status(429).json({ error: limit.message, tier: limit.tier })
-  }
-
-  if (!messages || !Array.isArray(messages)) {
-    return res.status(400).json({ error: 'messages required' })
-  }
+  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
   const systemPrompt = `You are Stream, a knowledgeable coding assistant inside a browser-based code editor.
 
 ## WHO YOU ARE
-You are the user's pair-programmer. Think of yourself as a senior dev sitting next to them.
-You help them understand their code, plan features, debug problems, and make decisions.
-You are honest — if their approach has problems, say so. You are encouraging — point out what's working too.
+Senior dev pair-programmer. Honest, concise, adaptive.
 
-## WHAT YOU DO IN THIS MODE
-- Answer questions about the code they're writing
-- Explain concepts, patterns, and tradeoffs
-- Help them plan what to build next
-- Diagnose why something might not work
-- Suggest approaches without writing the full implementation
-
-## WHAT YOU DON'T DO IN THIS MODE
-- You don't write code for them. That's Agent mode.
-- If they ask you to build / add / change / create / fix code, say:
-  "That's a job for Agent mode — switch the toggle at the top and ask me there. I'll write it into your editor so you can review the diff."
-- You don't dump full files. If a 3-line snippet illustrates a point, fine. But full rewrites? No.
-
-## HOW TO READ THEIR CODE
-When the user has a file open, you'll see it below. Look at it carefully:
-- What is this file trying to do? (Look at names, structure, comments.)
-- What pattern are they using? (Functional? OOP? React hooks?)
-- What's their style? (Semicolons? Quotes? Indentation?)
-- Is anything obviously broken?
-
-When they ask "how do I fix X?", reference the ACTUAL code they have. Don't give generic advice.
-When they ask "what does this do?", explain THEIR specific code, not a textbook definition.
-
-## HOW TO READ THEIR PROJECT CONTEXT
-You only see the currently open file. If a question depends on other files (imports, config, etc.), ask them what those files look like, or tell them to switch to Agent mode where you can see the whole project.
+## WHAT YOU DO
+- Answer questions about their code, explain concepts, help plan.
+- If they ask you to build/change code, say: "Switch to Agent mode — I'll write it into your editor so you can review."
+- Don't dump full files. Short snippets only (2-5 lines).
 
 ## TONE
-- Concise. No filler. No "great question!" openers.
-- Direct. Use code formatting when referring to identifiers: \`myVar\`, \`useState\`.
-- Honest. If their code is buggy, say so plainly — but constructively.
-- Adaptive. If they're a beginner, explain more. If they're experienced, skip the basics.
-
-## OUTPUT FORMAT
-- Plain prose. Markdown allowed (\`code\`, **bold**, lists).
-- Short snippets OK — always fenced with language tag.
-- No emoji spam. An occasional ✅ or ⚠️ for clarity is fine.
+Concise. No filler. Use \`code\` formatting for identifiers. Honest if their code is buggy.
 
 ${language ? `## CURRENT FILE\nLanguage: ${language}` : ''}
 ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
@@ -235,27 +214,20 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
   try {
     const stream = await groq.chat.completions.create({
       model: model || 'openai/gpt-oss-20b',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        ...messages,
-      ],
+      messages: [{ role: 'system', content: systemPrompt }, ...messages],
       stream: true,
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
     })
-
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) {
-        res.write(`data: ${JSON.stringify({ text })}\n\n`)
-      }
+      if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
     }
-
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
-    console.error('Groq error:', err)
+    console.error('Chat error:', err)
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
     res.end()
   }
@@ -263,62 +235,23 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
 
 app.post('/api/edit', async (req, res) => {
   const { action, code, selection, language, instruction, model, thinking } = req.body
-
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-
   const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) {
-    return res.status(429).json({ error: limit.message, tier: limit.tier })
-  }
+  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  if (!action) return res.status(400).json({ error: 'action required' })
 
-  if (!action) {
-    return res.status(400).json({ error: 'action required' })
-  }
-
-  const SYSTEM = `You are Stream's code transformer. You take code in, you return code out. Nothing else.
-
-## OUTPUT RULES (CRITICAL)
-- Return ONLY the resulting code. No prose. No explanation. No preamble. No "here's the fixed version".
-- NEVER wrap output in \`\`\` fences. The response IS the code.
-- NEVER add comments explaining what you changed. If comments belong in the code, add them naturally — but no meta-commentary.
-- Preserve the user's style EXACTLY:
-  - Same quote style (single vs double)
-  - Same semicolon usage
-  - Same indentation (spaces vs tabs, width)
-  - Same naming conventions (camelCase vs snake_case)
-  - Same level of comments
-
-## HOW TO READ THE CODE
-Before making changes, understand:
-- What language? (JS, TS, Python, HTML, etc.)
-- What is this code doing?
-- What's the user's intent? (A bug fix? A refactor? Adding a feature?)
-- What conventions does this codebase already use?
-
-## TASK-SPECIFIC BEHAVIOR
-- **complete**: Continue the code naturally from where it ends. Keep the same style. Return the FULL file (original + your completion).
-- **fix**: Find real bugs. Fix them minimally. Don't refactor unrelated code. Return the FULL corrected file.
-- **refactor**: Improve readability and idiomatic-ness, but PRESERVE behavior. Don't change the API. Return the FULL refactored file.
-- **comment**: Add useful comments. Do NOT change logic, variable names, or structure. Return the FULL commented file.
-- **explain**: Return a short comment block at the top of the file explaining it. Do NOT change the actual code below.
-- **custom**: Do exactly what the instruction says. Nothing more, nothing less.
-- **selection**: You're given a snippet. Return ONLY the modified snippet. Same scope. Don't wrap it in the rest of the file.
-
-## QUALITY BAR
-- If you're fixing a bug, the fix must actually work — don't just move code around.
-- If you're completing code, the completion must be plausible and useful, not filler.
-- If the input is already fine, return it unchanged. Don't invent problems.`
+  const SYSTEM = `You are a code transformer. Return ONLY the resulting code. No prose. No fences. Preserve style exactly.`
 
   const prompts = {
-    complete: `Complete the following ${language} code. Continue naturally from where it ends. Return the FULL file (original + completion).\n\nCODE:\n${code}`,
-    fix: `Find and fix bugs/errors in this ${language} code. Return the FULL corrected file.\n\nCODE:\n${code}`,
-    refactor: `Refactor this ${language} code to be cleaner and more idiomatic. Return the FULL refactored file.\n\nCODE:\n${code}`,
-    comment: `Add helpful comments to this ${language} code. Return the FULL commented file. Don't change logic, just add comments.\n\nCODE:\n${code}`,
-    explain: `Explain what this ${language} code does. Be concise (max 3 short paragraphs). Respond in plain text, not code.\n\nCODE:\n${code}`,
-    custom: `Task: ${instruction}\n\nReturn the FULL modified ${language} file.\n\nCODE:\n${code}`,
+    complete: `Complete this ${language} code. Return the FULL file.\n\n${code}`,
+    fix: `Fix bugs in this ${language} code. Return the FULL corrected file.\n\n${code}`,
+    refactor: `Refactor this ${language} code. Preserve behavior. Return the FULL refactored file.\n\n${code}`,
+    comment: `Add comments to this ${language} code. Don't change logic.\n\n${code}`,
+    explain: `Explain this ${language} code in max 3 short paragraphs.\n\n${code}`,
+    custom: `Task: ${instruction}\n\nReturn the FULL modified ${language} file.\n\n${code}`,
     selection: selection && selection.trim()
-      ? `Here is a snippet selected in a larger ${language} file. Task: ${instruction || 'improve this code'}. Return ONLY the improved snippet — same scope, do not include the rest of the file.\n\nSNIPPET:\n${selection}`
-      : `Task: ${instruction || 'improve this file'}. Return the FULL improved ${language} file.\n\nCODE:\n${code || ''}`,
+      ? `Snippet from a ${language} file. Task: ${instruction || 'improve'}. Return ONLY the improved snippet.\n\n${selection}`
+      : `Task: ${instruction || 'improve'}. Return the FULL ${language} file.\n\n${code || ''}`,
   }
 
   const userPrompt = prompts[action]
@@ -331,20 +264,15 @@ Before making changes, understand:
   try {
     const stream = await groq.chat.completions.create({
       model: model || 'openai/gpt-oss-20b',
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: userPrompt },
-      ],
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userPrompt }],
       stream: true,
       temperature: 0.3,
       max_tokens: 4096,
     })
-
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
       if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
     }
-
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
@@ -357,127 +285,60 @@ Before making changes, understand:
 
 app.post('/api/agent', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking } = req.body
-
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-
   const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) {
-    return res.status(429).json({ error: limit.message, tier: limit.tier })
-  }
-
+  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
   const MAX_FILE_CHARS = 4000
   const MAX_TOTAL_CHARS = 20000
 
   const fileList = Object.entries(files || {})
-    .filter(([path]) => {
-      if (path.endsWith('.gitkeep')) return false
-      if (path.endsWith('.lock')) return false
-      if (path.endsWith('.log')) return false
-      if (path.startsWith('node_modules/')) return false
-      return true
-    })
-    .map(([path, f]) => {
+    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
+    .map(([p, f]) => {
       const content = (f.content || '').slice(0, MAX_FILE_CHARS)
       const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
-      return `--- ${path} ---\n${content}${truncated}`
+      return `--- ${p} ---\n${content}${truncated}`
     })
     .join('\n\n')
     .slice(0, MAX_TOTAL_CHARS)
 
- const SYSTEM = `You are Stream Agent, an autonomous coding agent working inside a browser-based code editor.
+  const SYSTEM = `You are Stream Agent, an autonomous coding agent.
 
-You receive a request and the current state of the user's project. You respond with ONLY a JSON object.
-
-## RESPONSE FORMAT (STRICT)
+You respond with ONLY a JSON object:
 
 {
-  "explanation": "one-line summary of what you did",
-  "plan": ["step 1", "step 2", "step 3"],
+  "explanation": "one-line summary",
+  "plan": ["step 1", "step 2"],
   "operations": [
-    { "type": "create_file", "path": "src/NewFile.jsx", "content": "..." },
-    { "type": "write_file",  "path": "src/App.jsx",     "content": "..." },
+    { "type": "create_file", "path": "src/New.jsx", "content": "..." },
+    { "type": "write_file",  "path": "src/App.jsx", "content": "..." },
     { "type": "delete_file", "path": "src/Old.jsx" }
   ]
 }
 
-- No markdown. No code fences. No prose outside the JSON.
-- "plan" is optional. Include it when the task has 2+ logical steps.
+No markdown, no fences, no prose outside JSON.
 
-## HOW TO APPROACH EVERY REQUEST
+## RULES
+- Paths relative to project root ("src/App.jsx", not "/src/App.jsx").
+- FULL file content for write_file / create_file.
+- Never both create_file AND write_file for the same path.
+- Prefer editing existing files over creating new ones.
+- Only touch files that MUST change.
+- Match existing style + language.
+- No placeholders, no "// TODO", no fake names.
+- All imports must reference existing or co-created files.
 
-### Step 1 — Understand the project
-Before you write anything, look at the files you were given:
-- What language / framework? (Plain HTML? React? Vue? Node?)
-- What folder structure?
-- What's the user's code style? (Semicolons? Quotes? Indentation? Comments?)
-- Are there existing utilities, components, or helpers you should reuse?
-
-### Step 2 — Understand the request IN CONTEXT
-- What is the user literally asking for?
-- What files would this require?
-- Is this a follow-up to a previous turn? (Check the conversation history.)
-  - If yes: EXTEND what's already there. Don't start over.
-  - "Add X to the login page" means: find the login page, add X to it.
-  - "Fix the header" means: find the header, fix it. Don't rewrite the whole file.
-- What is the user ACTUALLY trying to build? (If they say "make a signup page", they probably mean a complete page — form, styling, structure — not just an HTML skeleton.)
-
-### Step 3 — Plan the minimal change
-- Only touch files that MUST change. Nothing else.
-- Don't "clean up" or "improve" code the user didn't ask about.
-- Don't re-create files that already exist.
-- Prefer EDITING an existing file over creating a new one.
-- If a request would break existing functionality, either handle it or ask first.
-
-### Step 4 — Write good code
-- Match the codebase's conventions.
-- No placeholders. No "// TODO". No fake function names.
-- All imports must reference files that exist OR that you're creating in the same response.
-- If creating React components: they must render. No dangling references.
-- If HTML: full valid document, no Vite-only scripts (see below).
-
-## HARD RULES
-
-- Paths are relative to project root (e.g. "src/App.jsx", NEVER "/src/App.jsx").
-- For write_file and create_file: return the FULL file content, not a diff or snippet.
-- Never create_file AND write_file for the same path in one response — just one.
-- Only use delete_file when the user explicitly asks.
-- For React: components in src/components/, hooks in src/hooks/, utils in src/utils/.
-- For plain HTML projects: work with the .html/.css/.js files already present.
-
-## HTML FILES — VERY IMPORTANT
-
-If you create or edit any .html file:
-- NEVER include <script type="module" src="/src/main.jsx"></script> or similar Vite/React entry scripts.
-- NEVER include <script src="/@vite/client"></script> or /@react-refresh.
-- These are injected by the dev server at runtime and break static previews.
-- For a static page: use plain <script src="somename.js"></script> or inline <script>...</script> only.
-- If the page needs React: put the JSX in .jsx files and wire it into the existing React app — don't put React entry scripts in a standalone HTML file.
+## HTML RULES
+Never add <script type="module" src="/src/main.jsx"></script> or /@vite/client or /@react-refresh to HTML. Those break static preview.
 
 ## WHEN TO DECLINE
-
-- **Request is unclear** → operations: [], explanation politely asks for clarification. Example: "What should the button do when clicked?"
-- **Request is impossible given the setup** → operations: [], explanation says why. Example: "This project is React, but you're asking for a Python backend — I'd need a Node.js backend which we don't have here."
-- **Already done** → operations: [], explanation says "This already exists in src/components/Header.jsx — nothing to change."
-- **Would break the project** → operations: [], explanation explains the tradeoff and suggests an alternative.
-
-Never invent a solution to a problem you don't understand. Asking is better than guessing.
-
-## QUALITY CHECKLIST (RUN BEFORE RESPONDING)
-
-- [ ] Did I read the existing files, not just skim them?
-- [ ] Did I match their code style?
-- [ ] Are all my imports valid?
-- [ ] Are my operations the MINIMUM needed?
-- [ ] Does my JSON parse? (No stray commas. No escaped quotes.)
-- [ ] Did I avoid adding Vite-only scripts to HTML?`
+- Unclear → operations: [], explanation asks clarifying question.
+- Impossible → operations: [], explanation explains why.
+- Already done → operations: [], explanation says so.`
 
   const conversation = Array.isArray(history)
-    ? history.slice(-20).map((m) => ({
-        role: m.role,
-        content: m.text || m.content || '',
-      }))
+    ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
   const USER = `Project files:
@@ -496,17 +357,13 @@ User request: ${prompt}`
   try {
     const stream = await groq.chat.completions.create({
       model: model || 'openai/gpt-oss-20b',
-      messages: [
-        { role: 'system', content: SYSTEM },
-        ...conversation,
-      ],
+      messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
       max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 12288 : 8192,
-      reasoning_effort: thinking === 'ultra' ? 'high' : thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
+      reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
       response_format: { type: 'json_object' },
     })
-
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
       if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
@@ -523,28 +380,14 @@ User request: ${prompt}`
 
 app.post('/api/agent/test', async (req, res) => {
   const { sessionId, files, activeFile } = req.body
-
-  if (!sessionId || !files) {
-    return res.status(400).json({ error: 'sessionId and files required' })
-  }
-
-  previewSessions.set(sessionId, {
-    files,
-    activeFile,
-    updatedAt: Date.now(),
-  })
-
+  if (!sessionId || !files) return res.status(400).json({ error: 'sessionId and files required' })
+  previewSessions.set(sessionId, { files, activeFile, updatedAt: Date.now() })
   previewErrors.set(sessionId, [])
-
-  res.json({
-    ok: true,
-    previewUrl: `/preview/${sessionId}`,
-  })
+  res.json({ ok: true, previewUrl: `/preview/${sessionId}` })
 })
 
 app.post('/api/agent/diagnose', async (req, res) => {
   const { sessionId, files, activeFile, errors, originalPrompt, attempt, model } = req.body
-
   if (!files) return res.status(400).json({ error: 'files required' })
 
   const errorList = Array.isArray(errors) && errors.length > 0
@@ -553,102 +396,43 @@ app.post('/api/agent/diagnose', async (req, res) => {
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.log'))
-    .map(([path, f]) => `--- ${path} ---\n${(f.content || '').slice(0, 3000)}${(f.content || '').length > 3000 ? '\n…(truncated)' : ''}`)
+    .map(([p, f]) => `--- ${p} ---\n${(f.content || '').slice(0, 3000)}${(f.content || '').length > 3000 ? '\n…(truncated)' : ''}`)
     .join('\n\n')
     .slice(0, 18000)
 
-  const SYSTEM = `You are Stream Agent in TEST mode. You just applied changes and now you're checking whether they broke anything.
+  const SYSTEM = `You are Stream Agent in TEST mode.
 
-## CONTEXT
-The user originally asked: "${originalPrompt || '(unknown)'}"
+User asked: "${originalPrompt || '(unknown)'}"
 
-The current project files are below. The preview was loaded and produced this console output:
-
+Console output from preview:
 ${errorList}
 
-## YOUR JOB
+Decide:
+- Fine → { "status": "ok", "summary": "short message" }
+- Broken → { "status": "fix", "summary": "what's wrong", "operations": [...] }
 
-Look at the console output AND the current code. Decide one of three things:
+Rules: only fix REAL errors. console.log is not an error. No HTML files → status: ok, "No previewable HTML". Respond with ONLY JSON.`
 
-### 1. Everything looks fine → status: "ok"
-Respond: { "status": "ok", "summary": "short success message" }
-Use this when:
-- No error-level messages
-- Only console.log / info from user code
-- The change matches what was asked
-
-### 2. Something is broken → status: "fix"
-Respond: { "status": "fix", "summary": "what's wrong", "operations": [...] }
-Use this when:
-- You see error-level messages ("Uncaught", "TypeError", "is not defined", etc.)
-- The code clearly has a bug (missing imports, undefined variables, broken syntax)
-- The change broke something the user didn't ask to break
-
-### 3. Console has noise but nothing is wrong → status: "ok"
-Respond: { "status": "ok", "summary": "notes about what you observed" }
-Use this when:
-- The "errors" are informational (CORS warnings about dev servers, ad-blocker messages, etc.)
-- The project has no HTML files (nothing to preview)
-- The messages are from a different origin than the preview itself
-
-## RULES FOR PROPOSING FIXES
-
-If status is "fix":
-- Only fix REAL errors, not style preferences.
-- Fix the MINIMUM needed. Don't rewrite unrelated code.
-- Never propose the same fix that was already applied (check the previous attempts context).
-- If you've already tried a fix and it didn't work, try a DIFFERENT approach — don't repeat yourself.
-- The operations format is the same as the agent: create_file, write_file, delete_file.
-
-## WHAT'S NOT AN ERROR
-
-- console.log output from user code
-- Warnings about favicon.ico not found
-- Deprecation warnings from libraries
-- 404s from other origins (like dev server scripts)
-- "Failed to load resource" for URLs that aren't part of the user's project
-
-## OUTPUT FORMAT (STRICT)
-
-{
-  "status": "ok" | "fix",
-  "summary": "short message",
-  "operations": [ ... ]   // ONLY if status === "fix"
-}
-
-No markdown. No code fences. No commentary.`
-
-  const USER = `Attempt: ${attempt || 1}
-Active file: ${activeFile || '(unknown)'}
-
-Project files:
+  const USER = `Attempt ${attempt || 1}. Active: ${activeFile || '?'}
 
 ${fileList}
 
-Console output:
-
+Console:
 ${errorList}`
 
   try {
     const completion = await groq.chat.completions.create({
       model: model || 'openai/gpt-oss-20b',
-      messages: [
-        { role: 'system', content: SYSTEM },
-        { role: 'user', content: USER },
-      ],
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
       temperature: 0.2,
       max_tokens: 4096,
       response_format: { type: 'json_object' },
     })
-
     const raw = completion.choices[0]?.message?.content || '{}'
     let parsed
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      return res.json({ status: 'ok', summary: 'Could not parse AI diagnosis; assuming OK.' })
+    try { parsed = JSON.parse(raw) } catch {
+      return res.json({ status: 'ok', summary: 'Could not parse diagnosis; assuming OK.' })
     }
-
     res.json(parsed)
   } catch (err) {
     console.error('Diagnose error:', err)
@@ -656,25 +440,115 @@ ${errorList}`
   }
 })
 
-// ---------- Preview endpoints ----------
+// ============================================================
+// BUNDLER
+// ============================================================
+app.get('/api/preview/bundle/:id/*entry', async (req, res) => {
+  const sessionId = req.params.id
+  const rawEntry = req.params.entry
+  const entry = Array.isArray(rawEntry) ? rawEntry.join('/') : (rawEntry || '')
 
+  const session = previewSessions.get(sessionId)
+  if (!session) return res.status(404).send('/* session not found */')
+  if (!esbuildReady) return res.status(503).send('/* bundler not ready */')
+
+  const cacheKey = `${sessionId}:${entry}`
+  const cached = bundleCache.get(cacheKey)
+  if (cached && Date.now() - cached.timestamp < BUNDLE_CACHE_MS) {
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+    return res.send(cached.code)
+  }
+
+  const candidates = [entry, `src/${entry}`, `public/${entry}`]
+  let resolvedEntry = null
+  for (const c of candidates) {
+    if (session.files[c]) { resolvedEntry = c; break }
+  }
+  if (!resolvedEntry) return res.status(404).send(`/* entry not found: ${entry} */`)
+
+  const sessionFiles = session.files
+
+  try {
+    const entryNorm = resolvedEntry  // known session-relative path
+
+  const plugin = {
+    name: 'session-files',
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, (args) => {
+        // The entry itself must resolve as a session file, not external
+        if (args.kind === 'entry-point') {
+          return { path: entryNorm, namespace: 'session' }
+        }
+
+        // Bare imports (react, vue, etc.) → leave external
+        if (!args.path.startsWith('.') && !args.path.startsWith('/')) {
+          return { path: args.path, external: true }
+        }
+          let resolved
+          if (args.path.startsWith('/')) {
+            resolved = args.path.slice(1)
+          } else {
+            const dir = args.importer ? path.dirname(args.importer) : '.'
+            resolved = path.posix.normalize(path.posix.join(dir, args.path))
+          }
+          const tries = [
+            resolved,
+            `${resolved}.js`, `${resolved}.jsx`, `${resolved}.ts`, `${resolved}.tsx`, `${resolved}.mjs`,
+            `${resolved}/index.js`, `${resolved}/index.jsx`, `${resolved}/index.ts`,
+          ]
+          for (const t of tries) {
+            if (sessionFiles[t]) return { path: t, namespace: 'session' }
+          }
+          return { path: resolved, namespace: 'session' }
+        })
+        build.onLoad({ filter: /.*/, namespace: 'session' }, (args) => {
+          const file = sessionFiles[args.path]
+          if (!file) return { errors: [{ text: `File not found: ${args.path}` }] }
+          const ext = args.path.split('.').pop()?.toLowerCase()
+          const loaders = { js: 'jsx', jsx: 'jsx', ts: 'ts', tsx: 'tsx', css: 'css', json: 'json' }
+          return { contents: file.content || '', loader: loaders[ext] || 'jsx', resolveDir: '/' }
+        })
+      },
+    }
+
+    const result = await esbuild.build({
+      entryPoints: [resolvedEntry],
+      bundle: true,
+      write: false,
+      format: 'esm',
+      platform: 'browser',
+      target: ['es2020'],
+      jsx: 'automatic',
+      plugins: [plugin],
+      define: { 'process.env.NODE_ENV': '"production"' },
+      minify: false,
+      sourcemap: false,
+      logLevel: 'silent',
+    })
+
+    const code = result.outputFiles[0].text
+    bundleCache.set(cacheKey, { code, timestamp: Date.now() })
+
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+    res.setHeader('Cache-Control', 'no-cache')
+    res.send(code)
+  } catch (err) {
+    console.error('Bundle error:', err.message)
+    const errors = err.errors?.map((e) => e.text).join('\n') || err.message
+    res.setHeader('Content-Type', 'application/javascript; charset=utf-8')
+    res.send(`/* Bundle error:\n${errors}\n*/`)
+  }
+})
+
+// ============================================================
+// PREVIEW ENDPOINTS
+// ============================================================
 app.post('/api/preview/session', (req, res) => {
   const { sessionId, files, activeFile } = req.body
-  if (!files || typeof files !== 'object') {
-    return res.status(400).json({ error: 'files required' })
-  }
-
+  if (!files || typeof files !== 'object') return res.status(400).json({ error: 'files required' })
   let id = sessionId
-  if (!id || !previewSessions.has(id)) {
-    id = crypto.randomBytes(8).toString('hex')
-  }
-
-  previewSessions.set(id, {
-    files,
-    activeFile,
-    updatedAt: Date.now(),
-  })
-
+  if (!id || !previewSessions.has(id)) id = crypto.randomBytes(8).toString('hex')
+  previewSessions.set(id, { files, activeFile, updatedAt: Date.now() })
   res.json({ sessionId: id, url: `/preview/${id}` })
 })
 
@@ -689,8 +563,7 @@ app.post('/api/preview/log', (req, res) => {
 })
 
 app.get('/api/preview/errors/:id', (req, res) => {
-  const errors = previewErrors.get(req.params.id) || []
-  res.json({ errors })
+  res.json({ errors: previewErrors.get(req.params.id) || [] })
 })
 
 app.delete('/api/preview/errors/:id', (req, res) => {
@@ -701,100 +574,64 @@ app.delete('/api/preview/errors/:id', (req, res) => {
 app.get('/preview/:id', (req, res) => {
   const session = previewSessions.get(req.params.id)
   if (!session) {
-    return res.status(404).send(`
-      <html><body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:40px;text-align:center">
-        <h1>Session not found</h1>
-        <p>This preview session expired or was never created. Go back to Stream and click "Open preview URL" again.</p>
-      </body></html>
-    `)
+    return res.status(404).send(`<html><body style="background:#0d1117;color:#e6edf3;font-family:sans-serif;padding:40px;text-align:center"><h1>Session not found</h1></body></html>`)
   }
-
   const html = buildPreviewHtml(session.files, session.activeFile, req.params.id)
   res.setHeader('Content-Type', 'text/html; charset=utf-8')
   res.setHeader('Cache-Control', 'no-cache')
   res.send(html)
 })
-// Serve files inside a preview session (CSS, JS, HTML sub-pages, images, etc.)
+
+app.get('/preview/:id/bundle/*entry', (req, res) => {
+  const rawEntry = req.params.entry
+  const entry = Array.isArray(rawEntry) ? rawEntry.join('/') : (rawEntry || '')
+  res.redirect(307, `/api/preview/bundle/${req.params.id}/${entry}`)
+})
+
 app.get('/preview/:id/*filePath', (req, res) => {
   const session = previewSessions.get(req.params.id)
-  if (!session) {
-    return res.status(404).send('Session not found')
-  }
+  if (!session) return res.status(404).send('Session not found')
 
-  // Express 5 returns wildcard params as an array of segments
   const rawPath = req.params.filePath
   const filePath = Array.isArray(rawPath) ? rawPath.join('/') : (rawPath || '')
   if (!filePath) return res.status(404).send('File not found')
 
-  // Try a few variations — the browser might request "styles.css"
-  // while the file lives at "public/styles.css" or "src/styles.css"
-  const candidates = [
-    filePath,
-    `public/${filePath}`,
-    `src/${filePath}`,
-    `src/styles/${filePath}`,
-  ]
-
+  const candidates = [filePath, `public/${filePath}`, `src/${filePath}`, `src/styles/${filePath}`]
   let file = null
-  for (const candidate of candidates) {
-    if (session.files[candidate]) {
-      file = session.files[candidate]
-      break
-    }
-  }
-
-  // Also try: strip leading "public/" or "src/" from the request
+  for (const c of candidates) if (session.files[c]) { file = session.files[c]; break }
   if (!file) {
     const stripped = filePath.replace(/^(public|src)\//, '')
     if (session.files[stripped]) file = session.files[stripped]
   }
-
   if (!file) {
-    // Last resort: fuzzy match by basename
-    const requestedName = filePath.split('/').pop()
-    const matchKey = Object.keys(session.files).find(
-      (p) => p.split('/').pop() === requestedName
-    )
-    if (matchKey) file = session.files[matchKey]
+    const name = filePath.split('/').pop()
+    const key = Object.keys(session.files).find((p) => p.split('/').pop() === name)
+    if (key) file = session.files[key]
   }
+  if (!file) return res.status(404).send(`File not found: ${filePath}`)
 
-  if (!file) {
-    return res.status(404).send(`File not found: ${filePath}`)
-  }
-
-  // Serve with the right content type
   const ext = filePath.split('.').pop()?.toLowerCase()
+
+  if (['js', 'jsx', 'ts', 'tsx', 'mjs'].includes(ext)) {
+    return res.redirect(307, `/api/preview/bundle/${req.params.id}/${filePath}`)
+  }
+
   const types = {
-    html: 'text/html; charset=utf-8',
-    htm: 'text/html; charset=utf-8',
+    html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8',
     css: 'text/css; charset=utf-8',
-    js: 'application/javascript; charset=utf-8',
-    mjs: 'application/javascript; charset=utf-8',
     json: 'application/json; charset=utf-8',
-    svg: 'image/svg+xml',
-    png: 'image/png',
-    jpg: 'image/jpeg',
-    jpeg: 'image/jpeg',
-    gif: 'image/gif',
-    ico: 'image/x-icon',
-    txt: 'text/plain; charset=utf-8',
-    md: 'text/plain; charset=utf-8',
+    svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
+    gif: 'image/gif', ico: 'image/x-icon',
+    txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
   }
 
   const contentType = types[ext] || 'text/plain; charset=utf-8'
   res.setHeader('Content-Type', contentType)
   res.setHeader('Cache-Control', 'no-cache')
 
-  // If it's HTML, inject the console shim
   if (ext === 'html' || ext === 'htm') {
-    let html = file.content || ''
-
-    // Strip Vite/React-refresh injections
-    html = html
-      .replace(/<script[^>]*src=["'][^"']*@vite\/client[^"']*["'][^>]*>\s*<\/script>/gi, '')
-      .replace(/<script[^>]*src=["'][^"']*@react-refresh[^"']*["'][^>]*>\s*<\/script>/gi, '')
-      .replace(/<script[^>]*type=["']module["'][^>]*src=["'][^"']*\/src\/main\.[jt]sx?[^"']*["'][^>]*>\s*<\/script>/gi, '')
-
+    let html = stripViteInjections(file.content || '')
+    html = rewriteHtmlPaths(html, req.params.id)
     const shim = buildConsoleShim(req.params.id)
     html = html.includes('</head>')
       ? html.replace('</head>', `<script>${shim}</script></head>`)
@@ -805,84 +642,45 @@ app.get('/preview/:id/*filePath', (req, res) => {
   res.send(file.content || '')
 })
 
-// ------------------------------------------------------------
-// Subscriptions (Paystack)
-// ------------------------------------------------------------
-
-// Paystack plan codes — set these in Render env after creating plans in Paystack dashboard
+// ============================================================
+// SUBSCRIPTIONS (PAYSTACK)
+// ============================================================
 const PLAN_CODES = {
   pro3x: process.env.PAYSTACK_PLAN_PRO3X || '',
   pro5x: process.env.PAYSTACK_PLAN_PRO5X || '',
   pro10x: process.env.PAYSTACK_PLAN_PRO10X || '',
 }
 
-/**
- * POST /api/paystack/checkout
- * Body: { tier: 'pro3x' | 'pro5x' | 'pro10x' }
- * Requires auth.
- * Returns { authorizationUrl }.
- */
 app.post('/api/paystack/checkout', async (req, res) => {
-  if (!req.isAuth || !req.user?.id) {
-    return res.status(401).json({ error: 'Sign in required' })
-  }
-  if (!paystackConfigured()) {
-    return res.status(503).json({ error: 'Payments not configured' })
-  }
+  if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
+  if (!paystackConfigured()) return res.status(503).json({ error: 'Payments not configured' })
 
   const { tier } = req.body
-  if (!PLAN_CODES[tier]) {
-    return res.status(400).json({ error: `Unknown or unconfigured tier: ${tier}` })
-  }
+  if (!PLAN_CODES[tier]) return res.status(400).json({ error: `Unknown or unconfigured tier: ${tier}` })
 
   const email = req.user.email
   if (!email) return res.status(400).json({ error: 'No email on account' })
 
   try {
-    // Paystack amounts in kobo — but when using a plan, amount is ignored.
-    // We still pass it as a fallback.
-    const AMOUNTS = {
-      pro3x: 300000,   // ₦3000 (placeholder — adjust later)
-      pro5x: 500000,   // ₦5000
-      pro10x: 900000,  // ₦9000
-    }
-
+    const AMOUNTS = { pro3x: 300000, pro5x: 500000, pro10x: 900000 }
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-
     const { authorizationUrl, reference } = await initializeTransaction({
       email,
       amount: AMOUNTS[tier] || 1000,
       plan: PLAN_CODES[tier],
       callbackUrl: `${frontendUrl}/?payment=success`,
-      metadata: {
-        userId: req.user.id,
-        tier,
-      },
+      metadata: { userId: req.user.id, tier },
     })
-
-    res.json({
-      authorizationUrl,
-      reference,
-      tier,
-    })
+    res.json({ authorizationUrl, reference, tier })
   } catch (err) {
     console.error('Paystack checkout error:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
-/**
- * GET /api/subscription
- * Returns the current user's subscription (or null).
- */
 app.get('/api/subscription', async (req, res) => {
-  if (!req.isAuth || !req.user?.id) {
-    return res.status(401).json({ error: 'Sign in required' })
-  }
-  if (!subsConfigured()) {
-    return res.json({ subscription: null, note: 'Subscriptions not configured' })
-  }
-
+  if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
+  if (!subsConfigured()) return res.json({ subscription: null, note: 'Subscriptions not configured' })
   try {
     const sub = await getSubscription(req.user.id)
     res.json({ subscription: sub })
@@ -892,34 +690,17 @@ app.get('/api/subscription', async (req, res) => {
   }
 })
 
-/**
- * POST /api/subscription/cancel
- * Cancel the current user's subscription.
- */
 app.post('/api/subscription/cancel', async (req, res) => {
-  if (!req.isAuth || !req.user?.id) {
-    return res.status(401).json({ error: 'Sign in required' })
-  }
-  if (!subsConfigured()) {
-    return res.status(503).json({ error: 'Subscriptions not configured' })
-  }
-
+  if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
+  if (!subsConfigured()) return res.status(503).json({ error: 'Subscriptions not configured' })
   try {
     const sub = await getSubscription(req.user.id)
     if (!sub) return res.status(404).json({ error: 'No subscription found' })
-
-    // If we have a Paystack subscription, disable it there first
     if (sub.paystack_subscription_code && sub.paystack_email_token && paystackConfigured()) {
       try {
-        await disableSubscription({
-          code: sub.paystack_subscription_code,
-          emailToken: sub.paystack_email_token,
-        })
-      } catch (err) {
-        console.warn('Paystack disable failed (continuing):', err.message)
-      }
+        await disableSubscription({ code: sub.paystack_subscription_code, emailToken: sub.paystack_email_token })
+      } catch (err) { console.warn('Paystack disable failed:', err.message) }
     }
-
     const updated = await cancelSubscription(req.user.id)
     res.json({ subscription: updated })
   } catch (err) {
@@ -928,96 +709,63 @@ app.post('/api/subscription/cancel', async (req, res) => {
   }
 })
 
-/**
- * POST /api/paystack/webhook
- * Receives events from Paystack. Must be raw body for signature verification.
- * Handles: charge.success, subscription.create, subscription.disable, subscription.not_renew
- */
-app.post(
-  '/api/paystack/webhook',
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    // Respond 200 immediately so Paystack doesn't retry while we process
-    res.status(200).send('ok')
+app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  res.status(200).send('ok')
+  try {
+    const signature = req.headers['x-paystack-signature']
+    const rawBody = req.body.toString('utf8')
+    const valid = await verifyWebhookSignature(rawBody, signature)
+    if (!valid) return console.warn('Paystack webhook: invalid signature')
+    const event = JSON.parse(rawBody)
+    console.log('Paystack webhook:', event.event)
+    const data = event.data
+    const meta = data.metadata || {}
+    const userId = meta.userId
+    if (!userId) return
 
-    try {
-      const signature = req.headers['x-paystack-signature']
-      const rawBody = req.body.toString('utf8')
-
-      const valid = await verifyWebhookSignature(rawBody, signature)
-      if (!valid) {
-        console.warn('Paystack webhook: invalid signature')
-        return
-      }
-
-      const event = JSON.parse(rawBody)
-      console.log('Paystack webhook:', event.event)
-
-      const data = event.data
-
-      if (event.event === 'charge.success') {
-        const meta = data.metadata || {}
-        const userId = meta.userId
-        const tier = meta.tier
-        if (!userId || !tier) return
-
-        await upsertSubscription(userId, {
-          tier,
-          status: 'active',
-          paystack_customer_code: data.customer?.customer_code || null,
-          current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
-        })
-      }
-
-      if (event.event === 'subscription.create') {
-        const meta = data.metadata || {}
-        const userId = meta.userId
-        if (!userId) return
-
-        await upsertSubscription(userId, {
-          tier: meta.tier || 'pro3x',
-          status: 'active',
-          paystack_subscription_code: data.subscription_code || null,
-          paystack_email_token: data.email_token || null,
-          current_period_end: data.next_payment_date || null,
-        })
-      }
-
-      if (event.event === 'subscription.disable' || event.event === 'subscription.not_renew') {
-        const meta = data.metadata || {}
-        const userId = meta.userId
-        if (!userId) return
-
-        await upsertSubscription(userId, {
-          status: 'cancelled',
-        })
-      }
-
-      if (event.event === 'invoice.payment_failed') {
-        const meta = data.metadata || {}
-        const userId = meta.userId
-        if (!userId) return
-
-        await upsertSubscription(userId, {
-          status: 'past_due',
-        })
-      }
-    } catch (err) {
-      console.error('Webhook error:', err)
+    if (event.event === 'charge.success') {
+      await upsertSubscription(userId, {
+        tier: meta.tier,
+        status: 'active',
+        paystack_customer_code: data.customer?.customer_code || null,
+        current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+      })
     }
+    if (event.event === 'subscription.create') {
+      await upsertSubscription(userId, {
+        tier: meta.tier || 'pro3x',
+        status: 'active',
+        paystack_subscription_code: data.subscription_code || null,
+        paystack_email_token: data.email_token || null,
+        current_period_end: data.next_payment_date || null,
+      })
+    }
+    if (event.event === 'subscription.disable' || event.event === 'subscription.not_renew') {
+      await upsertSubscription(userId, { status: 'cancelled' })
+    }
+    if (event.event === 'invoice.payment_failed') {
+      await upsertSubscription(userId, { status: 'past_due' })
+    }
+  } catch (err) {
+    console.error('Webhook error:', err)
   }
-)
+})
 
-// ---------- Health check ----------
+// ============================================================
+// HEALTH + USAGE
+// ============================================================
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, hasKey: !!process.env.GROQ_API_KEY })
 })
+
 app.get('/api/usage', async (req, res) => {
   const u = await getUsage(req)
   res.json(u)
 })
 
-// ---------- Start server ----------
+// ============================================================
+// START
+// ============================================================
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Backend running on port ${PORT}`)
