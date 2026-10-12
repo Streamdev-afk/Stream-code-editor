@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from 'react'
-import { streamAgent } from '../lib/ai'
+import { streamAgent, planTask } from '../lib/ai'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 
-export default function AIChat({ code, language, files, activeFile, onApplyPlan, model, thinking, testAfterApply, onTestToggle }) {
+export default function AIChat({ code, language, files, activeFile, onApplyPlan, onPlanReady, model, thinking, testAfterApply, onTestToggle, planningMode = true }) {
   const [mode, setMode] = useState('chat')
   const [messages, setMessages] = useState([
     {
@@ -121,6 +121,39 @@ useEffect(() => {
     setStreaming(true)
 
     try {
+      // If planning mode is on, plan first
+      if (planningMode && onPlanReady) {
+        const planResult = await planTask(
+          { prompt: text, files, activeFile, history: messages, model, thinking },
+          (_chunk, full) => {
+            let hint = 'Analyzing project…'
+            if (full.length > 200) hint = 'Drafting plan…'
+            if (full.length > 600) hint = 'Almost ready…'
+            setMessages((m) => {
+              const c = [...m]
+              c[c.length - 1] = { role: 'assistant', text: hint, time: Date.now(), _status: true }
+              return c
+            })
+          }
+        )
+
+        const stepCount = Array.isArray(planResult.steps) ? planResult.steps.length : 0
+        setMessages((m) => {
+          const c = [...m]
+          c[c.length - 1] = {
+            role: 'assistant',
+            text: `🧭 Planned ${stepCount} step${stepCount === 1 ? '' : 's'}: ${planResult.title || planResult.summary || ''}\n\nReview the plan and click Execute when ready.`,
+            time: Date.now(),
+          }
+          return c
+        })
+
+        onPlanReady(planResult, text)
+        setStreaming(false)
+        return
+      }
+
+      // Fallback: direct agent (no planning)
       const plan = await streamAgent(
   { prompt: text, files, activeFile, history: messages, model, thinking },
   (_chunk, full) => {

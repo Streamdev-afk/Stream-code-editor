@@ -219,9 +219,17 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
     })
+        let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      if (text) {
+        totalChars += text.length
+        res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      }
+    }
+    if (totalChars === 0) {
+      console.error('Execute-step: empty response from Groq')
+      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step or lower thinking level.' })}\n\n`)
     }
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
@@ -290,8 +298,8 @@ app.post('/api/agent', async (req, res) => {
   if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
-  const MAX_FILE_CHARS = 4000
-  const MAX_TOTAL_CHARS = 20000
+  const MAX_FILE_CHARS = 2000
+  const MAX_TOTAL_CHARS = 10000
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
@@ -329,8 +337,27 @@ No markdown, no fences, no prose outside JSON.
 - No placeholders, no "// TODO", no fake names.
 - All imports must reference existing or co-created files.
 
-## HTML RULES
-Never add <script type="module" src="/src/main.jsx"></script> or /@vite/client or /@react-refresh to HTML. Those break static preview.
+## HTML + REACT RULES
+
+The preview supports ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
+
+Allowed in HTML:
+- <script type="module" src="app.jsx"></script>  (bundler handles JSX/TS)
+- <script type="module" src="src/main.jsx"></script>
+- Plain <script src="app.js"></script>
+- <link rel="stylesheet" href="styles.css">
+
+NOT allowed in HTML:
+- /@vite/client script
+- /@react-refresh script
+- Absolute paths starting with /src/ or /public/ — use relative paths
+
+For React apps:
+- Import React from a CDN with a full URL: import React from 'https://esm.sh/react@18'
+- Import ReactDOM the same way: import { createRoot } from 'https://esm.sh/react-dom@18/client'
+- NEVER use bare imports like import React from 'react' — the bundler leaves them external and the browser cannot resolve them
+- Put JSX in .jsx files, not .js or .html
+- Entry pattern: an HTML file with <div id="root"></div> and <script type="module" src="main.jsx"></script>, and main.jsx that mounts a component
 
 ## WHEN TO DECLINE
 - Unclear → operations: [], explanation asks clarifying question.
@@ -360,13 +387,21 @@ User request: ${prompt}`
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 12288 : 8192,
+      max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 10000 : 4096,
       reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
       response_format: { type: 'json_object' },
     })
+    let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      if (text) {
+        totalChars += text.length
+        res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      }
+    }
+    if (totalChars === 0) {
+      console.error('Agent: empty response from Groq')
+      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try again.' })}\n\n`)
     }
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
@@ -378,12 +413,355 @@ User request: ${prompt}`
   }
 })
 
+// ------------------------------------------------------------
+// Planning endpoint — AI breaks the task into steps
+// ------------------------------------------------------------
+app.post('/api/agent/plan', async (req, res) => {
+  const { prompt, files, activeFile, history, model, thinking } = req.body
+  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
+  const limit = await checkLimit(req, thinkingCost)
+  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  if (!prompt) return res.status(400).json({ error: 'prompt required' })
+
+  const MAX_FILE_CHARS = 2000
+  const MAX_TOTAL_CHARS = 12000
+
+  const fileList = Object.entries(files || {})
+    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
+    .map(([p, f]) => {
+      const content = (f.content || '').slice(0, MAX_FILE_CHARS)
+      const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
+      return `--- ${p} ---\n${content}${truncated}`
+    })
+    .join('\n\n')
+    .slice(0, MAX_TOTAL_CHARS)
+
+  const SYSTEM = `You are Stream Planner, an expert software architect.
+
+Your job: take a user's request and produce a STEP-BY-STEP PLAN. Do NOT write any code. Do NOT create files. ONLY plan.
+
+Respond with ONLY a JSON object:
+
+{
+  "title": "Short title of the task",
+  "summary": "1-2 sentence overview of what will be built",
+  "estimatedFiles": 5,
+  "steps": [
+    {
+      "id": 1,
+      "title": "Short step title (imperative, e.g. 'Create index.html')",
+      "description": "One sentence: what this step does and what files it touches",
+      "files": ["index.html"]
+    },
+    {
+      "id": 2,
+      "title": "Create styles.css",
+      "description": "Dark theme, typography, layout, responsive grid.",
+      "files": ["styles.css"]
+    }
+  ]
+}
+
+## RULES
+
+- Aim for 3-8 steps. Each step should produce 1-3 files.
+- Group related files into a single step (e.g. "Create all HTML pages" not "Create page 1, create page 2, create page 3").
+- Order matters: foundational files first (HTML structure → CSS → JS → linking).
+- Steps must be SMALL enough that one step's code fits in ~4k tokens.
+- Every file must appear in exactly ONE step.
+- Do NOT include a "review" or "test" step — execution is automatic.
+- Be specific about what each file contains.
+
+## CONTEXT
+
+You may be given the current state of the project. If files already exist, plan to EDIT them or ADD to them, not recreate them.
+
+If the request is small (<3 files), still respond with a plan — even if it's 1-2 steps.
+
+## TECHNOLOGY CHOICE
+
+The preview supports real ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
+
+- For simple sites → plain HTML/CSS/JS is fine
+- For interactive apps → React (via CDN ESM imports) is supported
+- For games/3D → plain canvas/WebGL or Three.js from CDN works
+
+Plan the tech stack that best fits the request. Don't avoid React just because it "used to" break previews — that's fixed now.
+
+No markdown. No fences. No prose outside JSON.`
+
+  const conversation = Array.isArray(history)
+    ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
+    : []
+
+  const USER = `Project files:
+
+${fileList}
+
+${activeFile ? `User's currently open file: ${activeFile}\n` : ''}
+User request: ${prompt}`
+
+  conversation.push({ role: 'user', content: USER })
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+
+  try {
+    const stream = await groq.chat.completions.create({
+      model: model || 'openai/gpt-oss-20b',
+      messages: [{ role: 'system', content: SYSTEM }, ...conversation],
+      stream: true,
+      temperature: 0.2,
+      max_tokens: 3000,
+      reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
+      response_format: { type: 'json_object' },
+    })
+    let totalChars = 0
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || ''
+      if (text) {
+        totalChars += text.length
+        res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      }
+    }
+    if (totalChars === 0) {
+      console.error('Plan: empty response from Groq')
+      res.write(`data: ${JSON.stringify({ error: 'AI returned empty plan. Try again.' })}\n\n`)
+    }
+    res.write('data: [DONE]\n\n')
+    recordUsage(req, thinkingCost)
+    res.end()
+  } catch (err) {
+    console.error('Plan error:', err)
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.end()
+  }
+})
+
 app.post('/api/agent/test', async (req, res) => {
   const { sessionId, files, activeFile } = req.body
   if (!sessionId || !files) return res.status(400).json({ error: 'sessionId and files required' })
   previewSessions.set(sessionId, { files, activeFile, updatedAt: Date.now() })
   previewErrors.set(sessionId, [])
   res.json({ ok: true, previewUrl: `/preview/${sessionId}` })
+})
+
+// ------------------------------------------------------------
+// Execute ONE step of a plan
+// ------------------------------------------------------------
+app.post('/api/agent/execute-step', async (req, res) => {
+  const { step, plan, allSteps, files, activeFile, model, thinking, originalPrompt } = req.body
+  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
+  const limit = await checkLimit(req, thinkingCost)
+  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  if (!step) return res.status(400).json({ error: 'step required' })
+
+  const MAX_FILE_CHARS = 4000
+  const MAX_TOTAL_CHARS = 6000
+
+  const fileList = Object.entries(files || {})
+    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
+    .map(([p, f]) => {
+      const content = (f.content || '').slice(0, MAX_FILE_CHARS)
+      const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
+      return `--- ${p} ---\n${content}${truncated}`
+    })
+    .join('\n\n')
+    .slice(0, MAX_TOTAL_CHARS)
+
+  const stepsSummary = Array.isArray(allSteps)
+    ? allSteps.map((s) => `${s.id}. ${s.title} — ${s.description}`).join('\n')
+    : ''
+
+  const SYSTEM = `You are Stream Agent executing ONE STEP of a multi-step plan.
+
+## THE FULL PLAN
+
+${stepsSummary}
+
+## YOUR CURRENT STEP
+
+Step ${step.id}: ${step.title}
+Description: ${step.description}
+Files to produce: ${(step.files || []).join(', ')}
+
+## YOUR JOB
+
+Execute ONLY this step. Produce the files listed in this step. Do NOT jump ahead to later steps. Do NOT touch files that aren't in this step's list. (Except: you MAY edit an existing file to add imports/hooks that later steps need.)
+
+Respond with ONLY a JSON object:
+
+{
+  "explanation": "one-line summary of what you did in this step",
+  "operations": [
+    { "type": "create_file", "path": "index.html", "content": "..." },
+    { "type": "write_file",  "path": "styles.css", "content": "..." }
+  ]
+}
+
+## RULES
+
+- FULL file content for create_file / write_file. No snippets, no diffs.
+- Match the existing project's style and language.
+- All imports must reference files that exist OR are being created in this plan.
+- No placeholders, no "// TODO", no fake names.
+- If this step only creates files, list only create_file operations.
+- If this step modifies existing files, use write_file with the full new content.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## JSON ESCAPING — CRITICAL
+
+Your response must be VALID JSON. The content field contains source code.
+
+- Every newline in code MUST be \n (backslash-n), not an actual newline
+- Every double quote in code MUST be \" (backslash-quote)
+- Every backslash in code MUST be \\ (double backslash)
+- No trailing commas
+- No comments outside the JSON
+
+If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+
+Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+
+## HTML + REACT RULES
+
+The preview supports ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
+
+Allowed in HTML:
+- <script type="module" src="app.jsx"></script>
+- <script type="module" src="src/main.jsx"></script>
+- Plain <script src="app.js"></script>
+
+NOT allowed in HTML:
+- /@vite/client script
+- /@react-refresh script
+- Absolute paths starting with /src/ or /public/ — use relative paths
+
+For React apps:
+- Import React from a CDN with a full URL: import React from 'https://esm.sh/react@18'
+- Import ReactDOM the same way: import { createRoot } from 'https://esm.sh/react-dom@18/client'
+- NEVER use bare imports like import React from 'react' — the bundler leaves them external and the browser cannot resolve them
+- Put JSX in .jsx files, not .js or .html
+- Entry: HTML file with <div id="root"></div> and <script type="module" src="main.jsx"></script>
+
+No markdown. No fences. No prose outside JSON.`
+
+  const USER = `Original user request: ${originalPrompt || '(unknown)'}
+
+Current project files:
+
+${fileList}
+
+${activeFile ? `User's currently open file: ${activeFile}\n` : ''}
+
+Now execute step ${step.id} only.`
+
+  res.setHeader('Content-Type', 'text/event-stream')
+  res.setHeader('Cache-Control', 'no-cache')
+  res.setHeader('Connection', 'keep-alive')
+
+  try {
+    const stream = await groq.chat.completions.create({
+      model: model || 'openai/gpt-oss-20b',
+      messages: [
+        { role: 'system', content: SYSTEM },
+        { role: 'user', content: USER },
+      ],
+      stream: true,
+      temperature: 0.2,
+      max_tokens: 3000,
+      response_format: { type: 'json_object' },
+    })
+    let totalChars = 0
+    for await (const chunk of stream) {
+      const text = chunk.choices[0]?.delta?.content || ''
+      if (text) {
+        totalChars += text.length
+        res.write(`data: ${JSON.stringify({ text })}\n\n`)
+      }
+    }
+    if (totalChars === 0) {
+      console.error('Execute-step: empty response from Groq')
+      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step or lower thinking level.' })}\n\n`)
+    }
+    res.write('data: [DONE]\n\n')
+    recordUsage(req, thinkingCost)
+    res.end()
+  } catch (err) {
+    console.error('Execute-step error:', err)
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.end()
+  }
 })
 
 app.post('/api/agent/diagnose', async (req, res) => {
@@ -398,7 +776,7 @@ app.post('/api/agent/diagnose', async (req, res) => {
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.log'))
     .map(([p, f]) => `--- ${p} ---\n${(f.content || '').slice(0, 3000)}${(f.content || '').length > 3000 ? '\n…(truncated)' : ''}`)
     .join('\n\n')
-    .slice(0, 18000)
+    .slice(0, 6000)
 
   const SYSTEM = `You are Stream Agent in TEST mode.
 
@@ -512,7 +890,7 @@ app.get('/api/preview/bundle/:id/*entry', async (req, res) => {
     }
 
     const result = await esbuild.build({
-      entryPoints: [resolvedEntry],
+      entryPoints: [entryNorm],
       bundle: true,
       write: false,
       format: 'esm',

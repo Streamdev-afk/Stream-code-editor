@@ -26,12 +26,12 @@ import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
 import ModelSwitcher from './components/ModelSwitcher'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
-import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose } from './lib/ai'
+import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep } from './lib/ai'
+import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
-import { apiFetch } from './lib/supabase'
 import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
 
@@ -55,7 +55,6 @@ const [testProgress, setTestProgress] = useState(null) // null | { step, message
 const isMobile = useMobile(768)
 const { user, loading: authLoading } = useAuth()
 const [showLogin, setShowLogin] = useState(false)
-const [usage, setUsage] = useState(null)
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -69,6 +68,15 @@ const [usage, setUsage] = useState(null)
   const [mobileView, setMobileView] = useState('editor') // 'files' | 'editor' | 'ai' | 'preview'
   const [viewMode, setViewMode] = useState('code') // 'code' | 'preview'
   const [consoleMessages, setConsoleMessages] = useState([])
+
+  // Planning mode state
+  const [pendingPlanning, setPendingPlanning] = useState(null) // { plan, originalPrompt }
+  const [planningRunning, setPlanningRunning] = useState(false)
+  const [planningStepStatuses, setPlanningStepStatuses] = useState({})
+  const [planningStepLogs, setPlanningStepLogs] = useState({})
+  const [planningCurrentStep, setPlanningCurrentStep] = useState(-1)
+  const [planningError, setPlanningError] = useState(null)
+  const [planningAllSteps, setPlanningAllSteps] = useState([])
   
   const editorRef = useRef(null)
 
@@ -235,23 +243,6 @@ useEffect(() => {
   saveSettings(settings)
   applyTheme(settings.theme)
 }, [settings])
-
-useEffect(() => {
-  const fetchUsage = async () => {
-    try {
-      const res = await apiFetch(`${import.meta.env.VITE_API_URL || 'http://localhost:3001'}/api/usage`)
-      if (res.ok) {
-        const data = await res.json()
-        setUsage(data)
-      }
-    } catch (err) {
-      // Silent — usage is a nice-to-have
-    }
-  }
-  fetchUsage()
-  const interval = setInterval(fetchUsage, 30000) // every 30s
-  return () => clearInterval(interval)
-}, [user])
 
   // ---------- File ops ----------
   const openFile = (path) => {
@@ -917,11 +908,12 @@ case 'importZip': setShowImport(true); break
           files={files}
           activeFile={activeFile}
           onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
+          onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
           model={settings.model}
-          model={settings.model}
-thinking={settings.thinking || 'medium'}
+          thinking={settings.thinking || 'medium'}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
+          planningMode={true}
         />
       </div>
     )}
@@ -1012,13 +1004,127 @@ thinking={settings.thinking || 'medium'}
         files={files}
         activeFile={activeFile}
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
+        onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
         model={settings.model}
+        thinking={settings.thinking || 'medium'}
         testAfterApply={testAfterApply}
         onTestToggle={setTestAfterApply}
+        planningMode={true}
       />
     )}
   </div>
 )}
+
+ <PlanningModal
+        plan={pendingPlanning?.plan}
+        stepStatuses={planningStepStatuses}
+        stepLogs={planningStepLogs}
+        running={planningRunning}
+        currentStepIndex={planningCurrentStep}
+        errorMessage={planningError}
+        onReject={() => {
+          if (planningRunning) return
+          setPendingPlanning(null)
+          setPlanningStepStatuses({})
+          setPlanningStepLogs({})
+          setPlanningError(null)
+        }}
+        onApprove={async (steps) => {
+          if (!pendingPlanning) return
+          setPlanningRunning(true)
+          setPlanningError(null)
+          setPlanningAllSteps(steps)
+
+          // Fresh local state of files
+          let currentFiles = { ...files }
+
+          for (let i = 0; i < steps.length; i++) {
+            const step = steps[i]
+            setPlanningCurrentStep(i)
+            setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'running' }))
+            setPlanningStepLogs((s) => ({ ...s, [step.id]: `Running: ${step.title}…` }))
+
+            try {
+              const result = await executeStep(
+                {
+                  step,
+                  plan: pendingPlanning.plan,
+                  allSteps: steps,
+                  files: currentFiles,
+                  activeFile,
+                  model: settings.model,
+                  thinking: settings.thinking || 'medium',
+                  originalPrompt: pendingPlanning.originalPrompt,
+                },
+                (_chunk, full) => {
+                  setPlanningStepLogs((s) => ({
+                    ...s,
+                    [step.id]: `Writing… (${full.length} chars)`,
+                  }))
+                }
+              )
+
+              // Apply the step's operations
+              const ops = Array.isArray(result.operations) ? result.operations : []
+              const before = Object.fromEntries(
+                ops.map((op) => [op.path, currentFiles[op.path]?.content ?? null])
+              )
+              pushHistory(`Plan step ${step.id}: ${step.title}`, before, 'ai')
+
+              for (const op of ops) {
+                if (op.type === 'create_file' || op.type === 'write_file') {
+                  currentFiles[op.path] = {
+                    content: op.content ?? '',
+                    language: getLanguageFromPath(op.path),
+                  }
+                } else if (op.type === 'delete_file') {
+                  delete currentFiles[op.path]
+                }
+              }
+
+              setFiles({ ...currentFiles })
+
+              // Open the first file the step touched
+              if (ops[0]?.path) {
+                const firstPath = ops[0].path
+                setOpenTabs((tabs) => tabs.includes(firstPath) ? tabs : [...tabs, firstPath])
+                setActiveFile(firstPath)
+              }
+
+              setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'done' }))
+              setPlanningStepLogs((s) => ({
+                ...s,
+                [step.id]: `✓ ${result.explanation || 'Done'}`,
+              }))
+            } catch (err) {
+              console.error(`Step ${step.id} failed:`, err)
+              setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
+              setPlanningStepLogs((s) => ({ ...s, [step.id]: `✕ ${err.message}` }))
+              setPlanningError(`Step ${step.id} failed: ${err.message}`)
+              break
+            }
+          }
+
+          setPlanningRunning(false)
+          setPlanningCurrentStep(-1)
+
+          // Auto-close the modal after a short delay so user sees the final state
+          const allDone = steps.every((s) => planningStepStatuses[s.id] !== 'error')
+          setTimeout(() => {
+            if (allDone) {
+              showToast('Plan complete ✅', 'ok')
+            } else {
+              showToast('Plan finished with errors ⚠️', 'warn')
+            }
+            // Close the modal regardless
+            setPendingPlanning(null)
+            setPlanningStepStatuses({})
+            setPlanningStepLogs({})
+            setPlanningError(null)
+          }, 1200)
+        }}
+      />
+
 
 
       <BottomPanel
@@ -1064,11 +1170,7 @@ thinking={settings.thinking || 'medium'}
         <div className="status-item">
           <span className={`status-accent ${busy ? 'pulse' : ''}`}>●</span> {status}
         </div>
-        {usage && (
-  <div className="status-item" title={`${usage.used}/${usage.limit} requests today`}>
-    {usage.tier === 'anonymous' ? '👤' : '⭐'} {usage.used}/{usage.limit}
-  </div>
-)}
+
         <div className="status-item">{activeFile || 'No file'}</div>
         <div className="status-item">
           <LanguageSelect value={activeLanguage} onChange={changeLanguage} />
