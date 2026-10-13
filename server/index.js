@@ -389,8 +389,7 @@ User request: ${prompt}`
       temperature: 0.2,
       max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 10000 : 4096,
       reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
-      response_format: { type: 'json_object' },
-    })
+          })
     let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
@@ -515,7 +514,6 @@ User request: ${prompt}`
       temperature: 0.2,
       max_tokens: 3000,
       reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
-      response_format: { type: 'json_object' },
     })
     let totalChars = 0
     for await (const chunk of stream) {
@@ -534,7 +532,10 @@ User request: ${prompt}`
     res.end()
   } catch (err) {
     console.error('Plan error:', err)
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    const msg = err.message?.includes('validate JSON')
+      ? 'The AI had trouble formatting its plan. Please try rephrasing your request or try again.'
+      : err.message || 'Planning failed'
+    res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
     res.end()
   }
 })
@@ -611,17 +612,30 @@ Respond with ONLY a JSON object:
 
 ## JSON ESCAPING — CRITICAL
 
-Your response must be VALID JSON. The content field contains source code.
+Your response must be VALID JSON. The content field contains SOURCE CODE.
 
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
+RULES:
+- Escape newlines inside content strings as \n (backslash-n)
+- Escape double quotes inside content strings as \" (backslash-quote)
+- Escape backslashes as \\ (double backslash)
 - No trailing commas
 - No comments outside the JSON
 
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
+CRITICAL: Do NOT put literal \n or \" characters INSIDE the code you generate. The \n and \" are JSON-level escapes that the parser converts to real newlines and quotes. If you write them literally inside HTML or JS, they will appear as visible "\n" text.
 
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+For example, if the file content should be:
+    <!DOCTYPE html>
+    <html>
+
+Then in JSON it should be written as:
+    "content": "<!DOCTYPE html>\n<html>"
+
+NOT as:
+    "content": "<!DOCTYPE html>\\n<html>"  ← WRONG (double-escaped)
+NOT as:
+    "content": "<!DOCTYPE html>\\\n<html>"  ← WRONG
+
+Double-check your JSON before responding. Invalid JSON = failed step.
 
 ## JSON ESCAPING — CRITICAL
 
@@ -740,7 +754,7 @@ Now execute step ${step.id} only.`
       stream: true,
       temperature: 0.2,
       max_tokens: 3000,
-      response_format: { type: 'json_object' },
+      
     })
     let totalChars = 0
     for await (const chunk of stream) {

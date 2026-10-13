@@ -5,6 +5,19 @@
  */
 
 const STORAGE_KEY = 'stream-sessions-v1'
+const MERGED_FLAG_KEY = 'stream-sessions-merged-v1'
+
+export function hasMergedGuestSessions() {
+  return localStorage.getItem(MERGED_FLAG_KEY) === 'true'
+}
+
+export function markGuestSessionsMerged() {
+  localStorage.setItem(MERGED_FLAG_KEY, 'true')
+}
+
+export function resetMergedFlag() {
+  localStorage.removeItem(MERGED_FLAG_KEY)
+}
 
 // ---------- ID generation ----------
 function makeId() {
@@ -92,9 +105,9 @@ export function createEmptySession(title = 'New session') {
         time: now,
       },
     ],
-    files: { ...DEFAULT_FILES },
-    openTabs: ['src/App.jsx'],
-    activeFile: 'src/App.jsx',
+    files: {},           // ← truly empty
+    openTabs: [],
+    activeFile: '',
     history: [],
   }
 }

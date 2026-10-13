@@ -84,8 +84,6 @@ export async function streamAgent({ prompt, files, activeFile, history, model, t
   }
 }
 
-// ---------- Planning mode ----------
-
 export async function planTask({ prompt, files, activeFile, history, model, thinking }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/agent/plan`, {
     method: 'POST',
@@ -166,39 +164,93 @@ export async function executeStep({ step, plan, allSteps, files, activeFile, mod
     return extractJSONLocal(full)
   } catch (e) {
     console.error('Execute-step raw output:', full)
-
-    // Log the first 500 chars for debugging
     console.error('First 500 chars:', full.slice(0, 500))
-
-    throw new Error('Step execution returned invalid JSON. Retrying...')
+    throw new Error('Step execution returned invalid JSON. Try again or rephrase.')
   }
 }
 
 function extractJSONLocal(str) {
   let s = str.trim()
+  if (!s) throw new Error('Empty response')
+
   if (s.startsWith('```')) {
     s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '')
   }
+
   const first = s.indexOf('{')
   const last = s.lastIndexOf('}')
-  if (first !== -1 && last > first) s = s.slice(first, last + 1)
-
-  // Try strict parse first
-  try {
-    return JSON.parse(s)
-  } catch (e) {
-    // Fallback: try a lenient repair
-    const repaired = repairJSON(s)
-    return JSON.parse(repaired)
+  if (first === -1 || last <= first) {
+    throw new Error('No JSON object found in response')
   }
+  s = s.slice(first, last + 1)
+
+  let parsed
+  try {
+    parsed = JSON.parse(s)
+  } catch (e) {
+    const repaired = repairJSON(s)
+    parsed = JSON.parse(repaired)
+  }
+
+  return sanitizeParsedResult(parsed)
 }
 
 /**
- * Attempt to repair common JSON errors from LLMs:
- * - Unescaped newlines inside strings
- * - Trailing commas
- * - Unescaped backslashes
+ * Walks a parsed result object and un-escapes literal \n \r \t \" that
+ * slipped through as actual characters in file contents.
  */
+function sanitizeParsedResult(obj) {
+  if (!obj || typeof obj !== 'object') return obj
+
+  if (Array.isArray(obj.operations)) {
+    obj.operations = obj.operations.map((op) => {
+      if (!op || typeof op !== 'object') return op
+      if (typeof op.content === 'string') {
+        op = { ...op, content: unescapeContent(op.content) }
+      }
+      return op
+    })
+  }
+
+  return obj
+}
+
+/**
+ * If a string contains LITERAL \n sequences (backslash + n as two chars),
+ * replace them with real newlines. Same for \r \t and \".
+ * Safe: only runs if the string contains those literal patterns AND
+ * does NOT already contain real newlines in the same abundance.
+ */
+function unescapeContent(str) {
+  if (typeof str !== 'string') return str
+  if (!str) return str
+
+  // Check if the string has literal backslash sequences
+  const hasLiteralEscapes = /\\[nrt"\\]/.test(str)
+  if (!hasLiteralEscapes) return str
+
+  // Count real newlines vs literal \n
+  const realNewlines = (str.match(/\n/g) || []).length
+  const literalEscapes = (str.match(/\\n/g) || []).length
+
+  // If the string has way more literal \n than real newlines,
+  // it probably needs unescaping.
+  if (literalEscapes > realNewlines) {
+    try {
+      return str
+        .replace(/\\n/g, '\n')
+        .replace(/\\r/g, '\r')
+        .replace(/\\t/g, '\t')
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, '\\')
+    } catch {
+      return str
+    }
+  }
+
+  return str
+}
+
 function repairJSON(str) {
   let out = ''
   let inString = false
@@ -227,7 +279,6 @@ function repairJSON(str) {
     }
 
     if (inString) {
-      // Inside a string — replace raw control chars with escapes
       if (c === '\n') { out += '\\n'; continue }
       if (c === '\r') { out += '\\r'; continue }
       if (c === '\t') { out += '\\t'; continue }
@@ -235,8 +286,6 @@ function repairJSON(str) {
       continue
     }
 
-    // Outside a string
-    // Remove trailing commas: ,  followed by } or ]
     if (c === ',' && (next === '}' || next === ']')) {
       continue
     }
@@ -245,6 +294,16 @@ function repairJSON(str) {
   }
 
   return out
+}
+
+export async function searchWeb(query, maxResults = 5) {
+  const res = await apiFetch(`${API_BASE}/api/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, maxResults }),
+  })
+  if (!res.ok) throw new Error(`Search failed: HTTP ${res.status}`)
+  return res.json()
 }
 
 export async function updatePreviewSession({ sessionId, files, activeFile }) {

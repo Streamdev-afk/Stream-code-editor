@@ -30,7 +30,6 @@ import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose,
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
-import SessionsPanel from './components/SessionsPanel'
 import {
   loadSessions,
   saveSessions,
@@ -41,21 +40,55 @@ import {
   setActiveSession,
   getActiveSession,
   generateTitle,
+  hasMergedGuestSessions,
+  markGuestSessionsMerged,
 } from './lib/sessions'
+import {
+  isSyncAvailable,
+  loadRemoteSessions,
+  saveRemoteSession,
+  deleteRemoteSession,
+  uploadSessionBatch,
+} from './lib/syncSessions'
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
 
 function AppInner() {
+  const { user, loading: authLoading } = useAuth()
+
   // ---- Sessions store (the source of truth) ----
   const [sessionStore, setSessionStore] = useState(() => loadSessions())
 
-  // Persist on every change
+  // Cloud sync state
+  const [syncing, setSyncing] = useState(false)
+  const [syncReady, setSyncReady] = useState(false)
+
+  // Persist to localStorage on every change (always — local is the cache)
   useEffect(() => {
     saveSessions(sessionStore)
   }, [sessionStore])
 
+  // ---- Debounced cloud save: whenever the active session changes, push it ----
+  useEffect(() => {
+    if (!user) return
+    if (!syncReady) return
+    if (!isSyncAvailable()) return
+
+    const session = sessionStore.sessions.find((s) => s.id === sessionStore.activeSessionId)
+    if (!session) return
+
+    const t = setTimeout(async () => {
+      try {
+        await saveRemoteSession(session, user.id)
+      } catch (err) {
+        console.warn('Cloud save failed for session', session.id, err.message)
+      }
+    }, 1500)
+
+    return () => clearTimeout(t)
+  }, [sessionStore, user, syncReady])
   // Active session (always exists — loadSessions guarantees at least one)
   const activeSession = getActiveSession(sessionStore)
 
@@ -101,13 +134,20 @@ function AppInner() {
   const handleDeleteSession = (id) => {
     setSessionStore((s) => deleteSession(s, id))
     showToast('Chat deleted', 'info')
+
+    // Also remove from cloud if signed in
+    if (user && syncReady && isSyncAvailable()) {
+      deleteRemoteSession(id).catch((err) => {
+        console.warn('Cloud delete failed:', err.message)
+      })
+    }
   }
 
   const [dirty, setDirty] = useState(new Set())
   const [bottomOpen, setBottomOpen] = useState(true)
 const [showSidebar, setShowSidebar] = useState(() => localStorage.getItem('stream-sidebar') !== 'false')
 const [showAI, setShowAI] = useState(() => localStorage.getItem('stream-ai') !== 'false')
-const [sidebarTab, setSidebarTab] = useState('sessions') // 'sessions' | 'explorer' | 'search' | 'history'
+const [sidebarTab, setSidebarTab] = useState('explorer') // 'explorer' | 'search' | 'history'
 const [paletteMode, setPaletteMode] = useState(null) // null | 'files' | 'commands'
 const [pendingGotoLine, setPendingGotoLine] = useState(null) // { path, line }
 const [settings, setSettings] = useState(() => loadSettings())
@@ -117,8 +157,70 @@ const [previewSession, setPreviewSession] = useState(null)
 const [testAfterApply, setTestAfterApply] = useState(false)
 const [testProgress, setTestProgress] = useState(null) // null | { step, message } | { done: true }
 const isMobile = useMobile(768)
-const { user, loading: authLoading } = useAuth()
 const [showLogin, setShowLogin] = useState(false)
+  // ---- Cloud sync: on sign-in, load remote sessions (merge guest once) ----
+  useEffect(() => {
+    if (!user) {
+      setSyncReady(false)
+      return
+    }
+    if (!isSyncAvailable()) {
+      setSyncReady(true)
+      return
+    }
+
+    let cancelled = false
+
+    ;(async () => {
+      setSyncing(true)
+      try {
+        const remote = await loadRemoteSessions()
+
+        if (cancelled) return
+
+        // If user has never merged their guest sessions, do it now
+        const shouldMerge = !hasMergedGuestSessions()
+
+        if (shouldMerge) {
+          const localSessions = sessionStore.sessions
+          // Upload local sessions not already present in remote
+          const remoteIds = new Set(remote.map((s) => s.id))
+          const toUpload = localSessions.filter((s) => !remoteIds.has(s.id))
+
+          if (toUpload.length > 0) {
+            await uploadSessionBatch(toUpload, user.id)
+          }
+          markGuestSessionsMerged()
+
+          // After upload, reload remote to get everything
+          const merged = await loadRemoteSessions()
+          if (!cancelled) {
+            setSessionStore({
+              sessions: merged.length > 0 ? merged : sessionStore.sessions,
+              activeSessionId: merged[0]?.id || sessionStore.activeSessionId,
+            })
+          }
+        } else if (remote.length > 0) {
+          // Just switch to remote set
+          setSessionStore((s) => ({
+            sessions: remote,
+            activeSessionId: remote.find((r) => r.id === s.activeSessionId)?.id || remote[0].id,
+          }))
+        }
+
+        setSyncReady(true)
+      } catch (err) {
+        console.warn('Cloud sync load failed:', err)
+        setSyncReady(true) // fall back to local only
+      } finally {
+        if (!cancelled) setSyncing(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [user])
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -900,6 +1002,12 @@ case 'importZip': setShowImport(true); break
 
 <UsageDropdown />
 
+{syncing && (
+  <span className="sync-indicator" title="Syncing to cloud...">
+    ⟳
+  </span>
+)}
+
 {user ? (
   <UserMenu />
 ) : (
@@ -995,11 +1103,6 @@ case 'importZip': setShowImport(true); break
       <div className="sidebar-wrap">
         <div className="sidebar-tabs">
           <button
-            className={`sidebar-tab ${sidebarTab === 'sessions' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('sessions')}
-            title="Chats"
-          >💬</button>
-          <button
             className={`sidebar-tab ${sidebarTab === 'explorer' ? 'active' : ''}`}
             onClick={() => setSidebarTab('explorer')}
             title="Explorer (files)"
@@ -1015,16 +1118,6 @@ case 'importZip': setShowImport(true); break
             title="Version history"
           >🕐</button>
         </div>
-        {sidebarTab === 'sessions' && (
-          <SessionsPanel
-            sessions={sessionStore.sessions}
-            activeSessionId={sessionStore.activeSessionId}
-            onSelect={handleSelectSession}
-            onNew={handleNewSession}
-            onRename={handleRenameSession}
-            onDelete={handleDeleteSession}
-          />
-        )}
         {sidebarTab === 'explorer' && (
           <FileTree
             files={files}
@@ -1104,6 +1197,12 @@ case 'importZip': setShowImport(true); break
         testAfterApply={testAfterApply}
         onTestToggle={setTestAfterApply}
         planningMode={true}
+        sessions={sessionStore.sessions}
+        activeSessionId={sessionStore.activeSessionId}
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
       />
     )}
   </div>

@@ -19,7 +19,17 @@ export default function AIChat({
   testAfterApply,
   onTestToggle,
   planningMode = true,
+  // ---- sessions overlay props ----
+  sessions,
+  activeSessionId,
+  onSelectSession,
+  onNewSession,
+  onRenameSession,
+  onDeleteSession,
 }) {
+  const [showSessions, setShowSessions] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
+  const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
 
   // If parent supplies messages (session-backed), use those.
@@ -246,19 +256,43 @@ setMessages((m) => {
   return (
     <div className="aichat">
             <div className="panel-header aichat-header">
-        <div className="mode-switch">
-          <button
-            className={`mode-btn ${mode === 'chat' ? 'active' : ''}`}
-            onClick={() => setMode('chat')}
-          >
-            <span className="mode-dot" /> Chat
-          </button>
-          <button
-            className={`mode-btn ${mode === 'agent' ? 'active' : ''}`}
-            onClick={() => setMode('agent')}
-          >
-            <span className="mode-dot agent" /> Agent
-          </button>
+        <div className="aichat-header-row">
+          <div className="mode-switch">
+            <button
+              className={`mode-btn ${mode === 'chat' ? 'active' : ''}`}
+              onClick={() => setMode('chat')}
+            >
+              <span className="mode-dot" /> Chat
+            </button>
+            <button
+              className={`mode-btn ${mode === 'agent' ? 'active' : ''}`}
+              onClick={() => setMode('agent')}
+            >
+              <span className="mode-dot agent" /> Agent
+            </button>
+          </div>
+          <div className="aichat-header-actions">
+            <button
+              className={`aichat-icon-btn ${showSearch ? 'active' : ''}`}
+              onClick={() => {
+                setShowSearch((s) => !s)
+                setShowSessions(true)
+              }}
+              title="Search sessions"
+            >
+              🔍
+            </button>
+            <button
+              className={`aichat-icon-btn ${showSessions ? 'active' : ''}`}
+              onClick={() => {
+                setShowSessions((s) => !s)
+                if (showSessions) setShowSearch(false)
+              }}
+              title={showSessions ? 'Close sessions' : 'Show sessions'}
+            >
+              ▢
+            </button>
+          </div>
         </div>
         {mode === 'agent' && (
           <label className="test-toggle" title="After applying changes, let Stream open the preview, watch for errors, and auto-fix them">
@@ -271,6 +305,84 @@ setMessages((m) => {
           </label>
         )}
       </div>
+
+            {showSessions && (
+        <div className="aichat-sessions-overlay">
+          <div className="aichat-sessions-header">
+            <div className="aichat-sessions-title">Sessions</div>
+            <button
+              className="aichat-sessions-new"
+              onClick={() => {
+                onNewSession?.()
+                setShowSessions(false)
+              }}
+              title="New session"
+            >
+              ＋
+            </button>
+          </div>
+
+          {showSearch && (
+            <div className="aichat-sessions-search">
+              <input
+                className="aichat-sessions-search-input"
+                placeholder="Search sessions…"
+                value={sessionQuery}
+                onChange={(e) => setSessionQuery(e.target.value)}
+                autoFocus
+              />
+            </div>
+          )}
+
+          <div className="aichat-sessions-list">
+            {(() => {
+              const list = Array.isArray(sessions) ? sessions : []
+              const q = sessionQuery.trim().toLowerCase()
+              const filtered = q
+                ? list.filter((s) => (s.title || '').toLowerCase().includes(q))
+                : list
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="aichat-sessions-empty">
+                    {q ? 'No matches' : 'No sessions yet — click ＋ to create one'}
+                  </div>
+                )
+              }
+
+              return filtered.map((s) => {
+                const msgCount = Array.isArray(s.messages)
+                  ? s.messages.filter((m) => m.role === 'user').length
+                  : 0
+                const fileCount = s.files ? Object.keys(s.files).length : 0
+                const isActive = s.id === activeSessionId
+
+                return (
+                  <div
+                    key={s.id}
+                    className={`aichat-session-item ${isActive ? 'active' : ''}`}
+                    onClick={() => {
+                      onSelectSession?.(s.id)
+                      setShowSessions(false)
+                      setShowSearch(false)
+                      setSessionQuery('')
+                    }}
+                  >
+                    <div className="aichat-session-icon">💬</div>
+                    <div className="aichat-session-body">
+                      <div className="aichat-session-name">{s.title || 'Untitled'}</div>
+                      <div className="aichat-session-meta">
+                        {msgCount} msg · {fileCount} files
+                      </div>
+                    </div>
+                    {isActive && <div className="aichat-session-active-dot" />}
+                  </div>
+                )
+              })
+            })()}
+          </div>
+        </div>
+      )}
 
       <div className="chat-messages">
         {messages.map((msg, i) => {

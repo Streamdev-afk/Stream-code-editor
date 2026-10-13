@@ -208,21 +208,31 @@ export default function FileTree({
           }
         }}
       >
-        {tree.map((node) => (
-          <TreeNode
-            key={node.path}
-            node={node}
-            depth={0}
-            activeFile={activeFile}
-            onFileClick={onFileClick}
-            onRename={onRename}
-            onDelete={onDelete}
-            onNewFile={onNewFile}
-            onNewFolder={onNewFolder}
-            renaming={renaming}
-            setRenaming={setRenaming}
-          />
-        ))}
+        {tree.length === 0 ? (
+          <div className="tree-empty">
+            <div className="tree-empty-icon">📄</div>
+            <div className="tree-empty-title">No files yet</div>
+            <div className="tree-empty-hint">
+              Click <strong>＋</strong> above, right-click here, or ask the AI to build something.
+            </div>
+          </div>
+        ) : (
+          tree.map((node) => (
+            <TreeNode
+              key={node.path}
+              node={node}
+              depth={0}
+              activeFile={activeFile}
+              onFileClick={onFileClick}
+              onRename={onRename}
+              onDelete={onDelete}
+              onNewFile={onNewFile}
+              onNewFolder={onNewFolder}
+              renaming={renaming}
+              setRenaming={setRenaming}
+            />
+          ))
+        )}
 
         {rootMenu && (
           <div
