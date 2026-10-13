@@ -30,20 +30,84 @@ import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose,
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
+import SessionsPanel from './components/SessionsPanel'
+import {
+  loadSessions,
+  saveSessions,
+  addSession,
+  deleteSession,
+  renameSession,
+  updateSession,
+  setActiveSession,
+  getActiveSession,
+  generateTitle,
+} from './lib/sessions'
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
 
 function AppInner() {
-  const [files, setFiles] = useState(() => loadFiles())
-  const [openTabs, setOpenTabs] = useState(['src/App.jsx'])
-  const [activeFile, setActiveFile] = useState('src/App.jsx')
+  // ---- Sessions store (the source of truth) ----
+  const [sessionStore, setSessionStore] = useState(() => loadSessions())
+
+  // Persist on every change
+  useEffect(() => {
+    saveSessions(sessionStore)
+  }, [sessionStore])
+
+  // Active session (always exists — loadSessions guarantees at least one)
+  const activeSession = getActiveSession(sessionStore)
+
+  // Convenience accessors from active session
+  const files = activeSession.files
+  const openTabs = activeSession.openTabs
+  const activeFile = activeSession.activeFile
+  const history = activeSession.history || []
+  const messages = activeSession.messages || []
+
+  // Setters that patch the active session
+  const setFiles = (updater) => {
+    const nextFiles = typeof updater === 'function' ? updater(files) : updater
+    setSessionStore((s) => updateSession(s, s.activeSessionId, { files: nextFiles }))
+  }
+  const setOpenTabs = (updater) => {
+    const next = typeof updater === 'function' ? updater(openTabs) : updater
+    setSessionStore((s) => updateSession(s, s.activeSessionId, { openTabs: next }))
+  }
+  const setActiveFile = (next) => {
+    setSessionStore((s) => updateSession(s, s.activeSessionId, { activeFile: next }))
+  }
+  const setHistory = (updater) => {
+    const next = typeof updater === 'function' ? updater(history) : updater
+    setSessionStore((s) => updateSession(s, s.activeSessionId, { history: next }))
+  }
+  const setMessages = (updater) => {
+    const next = typeof updater === 'function' ? updater(messages) : updater
+    setSessionStore((s) => updateSession(s, s.activeSessionId, { messages: next }))
+  }
+
+  // ---- Session CRUD ----
+  const handleNewSession = () => {
+    setSessionStore((s) => addSession(s, 'New session'))
+    showToast('New chat created', 'ok')
+  }
+  const handleSelectSession = (id) => {
+    setSessionStore((s) => setActiveSession(s, id))
+  }
+  const handleRenameSession = (id, title) => {
+    setSessionStore((s) => renameSession(s, id, title))
+  }
+  const handleDeleteSession = (id) => {
+    setSessionStore((s) => deleteSession(s, id))
+    showToast('Chat deleted', 'info')
+  }
+
   const [dirty, setDirty] = useState(new Set())
   const [bottomOpen, setBottomOpen] = useState(true)
 const [showSidebar, setShowSidebar] = useState(() => localStorage.getItem('stream-sidebar') !== 'false')
 const [showAI, setShowAI] = useState(() => localStorage.getItem('stream-ai') !== 'false')
-const [sidebarTab, setSidebarTab] = useState('explorer') // 'explorer' | 'search'
+const [sidebarTab, setSidebarTab] = useState('sessions') // 'sessions' | 'explorer' | 'search' | 'history'
 const [paletteMode, setPaletteMode] = useState(null) // null | 'files' | 'commands'
 const [pendingGotoLine, setPendingGotoLine] = useState(null) // { path, line }
 const [settings, setSettings] = useState(() => loadSettings())
@@ -61,7 +125,6 @@ const [showLogin, setShowLogin] = useState(false)
   const [pendingDiff, setPendingDiff] = useState(null)
   const [pendingPlan, setPendingPlan] = useState(null)
   const [toast, setToast] = useState(null)
-  const [history, setHistory] = useState([])
   const [inputModal, setInputModal] = useState(null)
 
   // Phase 4 state
@@ -907,6 +970,14 @@ case 'importZip': setShowImport(true); break
           language={activeLanguage}
           files={files}
           activeFile={activeFile}
+          messages={messages}
+          setMessages={setMessages}
+          sessionTitle={activeSession.title}
+          onFirstMessage={(text) => {
+            if (activeSession.title === 'New session') {
+              handleRenameSession(activeSession.id, generateTitle(text))
+            }
+          }}
           onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
           onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
           model={settings.model}
@@ -924,6 +995,11 @@ case 'importZip': setShowImport(true); break
       <div className="sidebar-wrap">
         <div className="sidebar-tabs">
           <button
+            className={`sidebar-tab ${sidebarTab === 'sessions' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('sessions')}
+            title="Chats"
+          >💬</button>
+          <button
             className={`sidebar-tab ${sidebarTab === 'explorer' ? 'active' : ''}`}
             onClick={() => setSidebarTab('explorer')}
             title="Explorer (files)"
@@ -939,6 +1015,16 @@ case 'importZip': setShowImport(true); break
             title="Version history"
           >🕐</button>
         </div>
+        {sidebarTab === 'sessions' && (
+          <SessionsPanel
+            sessions={sessionStore.sessions}
+            activeSessionId={sessionStore.activeSessionId}
+            onSelect={handleSelectSession}
+            onNew={handleNewSession}
+            onRename={handleRenameSession}
+            onDelete={handleDeleteSession}
+          />
+        )}
         {sidebarTab === 'explorer' && (
           <FileTree
             files={files}
@@ -1003,6 +1089,14 @@ case 'importZip': setShowImport(true); break
         language={activeLanguage}
         files={files}
         activeFile={activeFile}
+        messages={messages}
+        setMessages={setMessages}
+        sessionTitle={activeSession.title}
+        onFirstMessage={(text) => {
+          if (activeSession.title === 'New session') {
+            handleRenameSession(activeSession.id, generateTitle(text))
+          }
+        }}
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
         onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
         model={settings.model}

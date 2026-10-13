@@ -3,15 +3,36 @@ import { streamAgent, planTask } from '../lib/ai'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 
-export default function AIChat({ code, language, files, activeFile, onApplyPlan, onPlanReady, model, thinking, testAfterApply, onTestToggle, planningMode = true }) {
+export default function AIChat({
+  code,
+  language,
+  files,
+  activeFile,
+  messages: messagesProp,
+  setMessages: setMessagesProp,
+  sessionTitle,
+  onFirstMessage,
+  onApplyPlan,
+  onPlanReady,
+  model,
+  thinking,
+  testAfterApply,
+  onTestToggle,
+  planningMode = true,
+}) {
   const [mode, setMode] = useState('chat')
-  const [messages, setMessages] = useState([
+
+  // If parent supplies messages (session-backed), use those.
+  // Otherwise fall back to internal state (backward compat).
+  const [localMessages, setLocalMessages] = useState(() => [
     {
       role: 'assistant',
       text: "Hey! I'm Stream. Ask me anything, or switch to Agent mode to make changes to your files.",
       time: Date.now(),
-    }
+    },
   ])
+  const messages = messagesProp ?? localMessages
+  const setMessages = setMessagesProp ?? setLocalMessages
   const [input, setInput] = useState('')
   const [streaming, setStreaming] = useState(false)
   const messagesEndRef = useRef(null)
@@ -204,10 +225,17 @@ setMessages((m) => {
     }
   }
 
-  const send = () => {
+    const send = () => {
     if (!input.trim() || streaming) return
     const text = input.trim()
     setInput('')
+
+    // Auto-title on first user message
+    const userMsgCount = messages.filter((m) => m.role === 'user').length
+    if (userMsgCount === 0 && onFirstMessage) {
+      onFirstMessage(text)
+    }
+
     if (mode === 'agent') sendAgent(text)
     else sendChat(text)
   }
