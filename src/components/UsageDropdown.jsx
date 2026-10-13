@@ -55,7 +55,7 @@ function WindowBar({ label, windowData, windowLabel }) {
   )
 }
 
-export default function UsageDropdown() {
+export default function UsageDropdown({ onUpgrade, onManage }) {
   const { user } = useAuth()
   const [open, setOpen] = useState(false)
   const [usage, setUsage] = useState(null)
@@ -73,9 +73,15 @@ export default function UsageDropdown() {
     }
     fetchUsage()
     const interval = setInterval(fetchUsage, 30000)
+
+    // Listen for a manual refresh event
+    const refreshHandler = () => fetchUsage()
+    window.addEventListener('stream-refresh-usage', refreshHandler)
+
     return () => {
       cancelled = true
       clearInterval(interval)
+      window.removeEventListener('stream-refresh-usage', refreshHandler)
     }
   }, [user])
 
@@ -160,11 +166,45 @@ export default function UsageDropdown() {
           {usage.tier === 'free' && (
             <div className="usage-menu-cta upgrade">
               <div className="usage-cta-text">
-                Upgrade for <strong>3×</strong> · <strong>5×</strong> · <strong>10×</strong> limits
+                Upgrade for higher limits
               </div>
-              <div className="usage-cta-hint">
-                Coming soon
+              <div className="upgrade-buttons">
+                <button
+                  className="upgrade-btn"
+                  onClick={() => onUpgrade?.('pro3x')}
+                >
+                  <div className="upgrade-btn-name">Pro 3×</div>
+                  <div className="upgrade-btn-price">₦3,000/mo</div>
+                </button>
+                <button
+                  className="upgrade-btn"
+                  onClick={() => onUpgrade?.('pro5x')}
+                >
+                  <div className="upgrade-btn-name">Pro 5×</div>
+                  <div className="upgrade-btn-price">₦5,000/mo</div>
+                </button>
+                <button
+                  className="upgrade-btn"
+                  onClick={() => onUpgrade?.('pro10x')}
+                >
+                  <div className="upgrade-btn-name">Pro 10×</div>
+                  <div className="upgrade-btn-price">₦9,000/mo</div>
+                </button>
               </div>
+            </div>
+          )}
+
+          {usage.tier !== 'anonymous' && usage.tier !== 'free' && (
+            <div className="usage-menu-cta pro">
+              <div className="usage-cta-text">
+                💎 You're on <strong>{usage.tierLabel}</strong>
+              </div>
+              <button
+                className="usage-manage-btn"
+                onClick={() => onManage?.()}
+              >
+                Manage subscription
+              </button>
             </div>
           )}
 

@@ -54,12 +54,37 @@ import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
+import { startCheckout, redirectToCheckout } from './lib/paystack'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
 
   // ---- Sessions store (the source of truth) ----
   const [sessionStore, setSessionStore] = useState(() => loadSessions())
+
+    // ---- Payment success detection ----
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('payment') === 'success') {
+      // Clean the URL
+      window.history.replaceState({}, '', window.location.pathname)
+
+      // Wait for auth to be ready, then refresh tier
+      setTimeout(() => {
+        // Trigger a usage refetch by adding a cache buster
+        window.dispatchEvent(new CustomEvent('stream-refresh-usage'))
+      }, 2500)
+
+      // Show a nice toast
+      setTimeout(() => {
+        setToast({
+          msg: '💎 Payment received — your Pro tier will activate shortly.',
+          kind: 'ok',
+        })
+        setTimeout(() => setToast(null), 5000)
+      }, 1000)
+    }
+  }, [])
 
   // Cloud sync state
   const [syncing, setSyncing] = useState(false)
@@ -118,6 +143,25 @@ function AppInner() {
   const setMessages = (updater) => {
     const next = typeof updater === 'function' ? updater(messages) : updater
     setSessionStore((s) => updateSession(s, s.activeSessionId, { messages: next }))
+  }
+
+    // ---- Checkout ----
+  const handleUpgrade = async (tier) => {
+    if (!user) {
+      setShowLogin(true)
+      return
+    }
+    try {
+      showToast(`Starting ${tier.toUpperCase()} checkout…`, 'info')
+      const { authorizationUrl } = await startCheckout(tier)
+      redirectToCheckout(authorizationUrl)
+    } catch (err) {
+      showToast(`Checkout failed: ${err.message}`, 'error')
+    }
+  }
+
+  const handleManageBilling = () => {
+    setShowSettings(true)
   }
 
   // ---- Session CRUD ----
@@ -228,6 +272,24 @@ const [showLogin, setShowLogin] = useState(false)
   const [pendingPlan, setPendingPlan] = useState(null)
   const [toast, setToast] = useState(null)
   const [inputModal, setInputModal] = useState(null)
+
+    // ---- Payment success detection ----
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get('payment') === 'success') {
+      window.history.replaceState({}, '', window.location.pathname)
+      setToast({
+        msg: '💎 Payment received — your Pro tier will activate shortly.',
+        kind: 'ok',
+      })
+      setTimeout(() => setToast(null), 5000)
+
+      // Trigger a usage refetch
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent('stream-refresh-usage'))
+      }, 2500)
+    }
+  }, [])
 
   // Phase 4 state
   const [mobileView, setMobileView] = useState('editor') // 'files' | 'editor' | 'ai' | 'preview'
@@ -1000,7 +1062,7 @@ case 'importZip': setShowImport(true); break
   title="Settings"
 >⚙</button>
 
-<UsageDropdown />
+<UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />
 
 {syncing && (
   <span className="sync-indicator" title="Syncing to cloud...">
@@ -1401,6 +1463,7 @@ case 'importZip': setShowImport(true); break
           settings={settings}
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
+          onUpgrade={handleUpgrade}
         />
       )}
 

@@ -1,4 +1,5 @@
 import { THEMES } from '../lib/settings'
+import BillingPanel from './BillingPanel'
 
 function Row({ label, hint, children }) {
   return (
@@ -24,7 +25,7 @@ function Toggle({ value, onChange }) {
   )
 }
 
-export default function SettingsModal({ settings, onChange, onClose }) {
+export default function SettingsModal({ settings, onChange, onClose, onUpgrade }) {
   const set = (key, value) => onChange({ ...settings, [key]: value })
 
   return (
@@ -42,6 +43,13 @@ export default function SettingsModal({ settings, onChange, onClose }) {
         </div>
 
         <div className="settings-body">
+
+          <div className="settings-section">
+            <div className="settings-section-title">Billing</div>
+            <div className="settings-billing-wrap">
+              <BillingPanel onUpgrade={onUpgrade} />
+            </div>
+          </div>
 
           <div className="settings-section">
             <div className="settings-section-title">Editor</div>

@@ -4606,3 +4606,232 @@
   box-shadow: 0 0 6px var(--accent-glow);
   flex-shrink: 0;
 }
+
+/* ============================================================
+   UPGRADE BUTTONS (usage dropdown)
+   ============================================================ */
+
+.upgrade-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.upgrade-btn {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  font-family: inherit;
+  text-align: left;
+}
+
+.upgrade-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+}
+
+.upgrade-btn-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.upgrade-btn-price {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.usage-manage-btn {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 8px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  margin-top: 8px;
+  transition: all var(--t-fast);
+}
+
+.usage-manage-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--border-strong);
+}
+
+/* ============================================================
+   BILLING PANEL (settings)
+   ============================================================ */
+
+.settings-billing-wrap {
+  padding: 4px 24px 12px;
+}
+
+.billing-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.billing-empty {
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.billing-current {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.billing-tier {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.billing-tier-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 20px;
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+.billing-tier-pro3x,
+.billing-tier-pro5x,
+.billing-tier-pro10x {
+  background: linear-gradient(135deg, #f0883e22, #f778ba22);
+  color: #f0883e;
+  box-shadow: 0 0 8px #f0883e33;
+}
+
+.billing-status {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 10px;
+  background: var(--bg-active);
+  color: var(--text-muted);
+}
+
+.billing-status-active {
+  background: #3fb95022;
+  color: var(--success);
+}
+
+.billing-status-cancelled {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.billing-period {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.billing-error {
+  padding: 8px 12px;
+  background: var(--danger-bg);
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-md);
+  color: #ffb3ba;
+  font-size: 12.5px;
+}
+
+.billing-upgrade-title {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.billing-upgrade-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.billing-upgrade-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--bg-app);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  cursor: pointer;
+  transition: all var(--t-fast);
+  font-family: inherit;
+  text-align: left;
+}
+
+.billing-upgrade-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px var(--accent-dim);
+}
+
+.billing-upgrade-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.billing-upgrade-limits {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+}
+
+.billing-upgrade-price {
+  font-size: 12px;
+  color: var(--accent);
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.billing-cancel {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--t-fast);
+}
+
+.billing-cancel:hover:not(:disabled) {
+  background: var(--danger-bg);
+}
+
+.billing-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

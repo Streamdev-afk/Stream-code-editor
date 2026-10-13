@@ -8,9 +8,11 @@ const PAYSTACK_BASE = 'https://api.paystack.co'
 
 const SECRET_KEY = process.env.PAYSTACK_SECRET_KEY
 
-export const isConfigured = !!SECRET_KEY
+export function isConfigured() {
+  return !!SECRET_KEY
+}
 
-if (!isConfigured) {
+if (!isConfigured()) {
   console.warn('⚠️  PAYSTACK_SECRET_KEY missing — payments disabled')
 }
 
