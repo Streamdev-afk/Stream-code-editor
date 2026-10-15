@@ -28,7 +28,8 @@
     "jose": "^6.2.12",
     "monaco-editor": "^0.55.1",
     "react": "^19.2.8",
-    "react-dom": "^19.2.8"
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4"
   },
   "devDependencies": {
     "@types/react": "^19.2.18",

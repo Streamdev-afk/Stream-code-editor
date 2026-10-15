@@ -68,10 +68,16 @@ useEffect(() => {
 
   const sendChat = async (text) => {
     const userMsg = { role: 'user', text, time: Date.now() }
+
+    // Build the full conversation including the new message
     const newMessages = [...messages, userMsg]
-    setMessages(newMessages)
+
+    // Update the session in ONE call so nothing gets overwritten
+    setMessages([
+      ...newMessages,
+      { role: 'assistant', text: '', time: Date.now() },
+    ])
     setStreaming(true)
-    setMessages((m) => [...m, { role: 'assistant', text: '', time: Date.now() }])
 
     try {
       const apiMessages = newMessages
@@ -92,7 +98,14 @@ useEffect(() => {
       } finally {
         clearTimeout(timeoutId)
       }
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      if (!res.ok) {
+        let errorMsg = `HTTP ${res.status}`
+        try {
+          const errorData = await res.json()
+          if (errorData.error) errorMsg = errorData.error
+        } catch {}
+        throw new Error(errorMsg)
+      }
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
@@ -145,7 +158,8 @@ useEffect(() => {
   }
 
   const sendAgent = async (text) => {
-    setMessages((m) => [...m,
+    setMessages([
+      ...messages,
       { role: 'user', text, time: Date.now() },
       { role: 'assistant', text: 'Analyzing project…', time: Date.now(), _status: true },
     ])
