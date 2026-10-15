@@ -16,10 +16,10 @@ export default function AIChat({
   onPlanReady,
   model,
   thinking,
+  behavior,
   testAfterApply,
   onTestToggle,
   planningMode = true,
-  // ---- sessions overlay props ----
   sessions,
   activeSessionId,
   onSelectSession,
@@ -92,7 +92,7 @@ useEffect(() => {
         res = await apiFetch(`${API_BASE}/api/chat`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: apiMessages, code, language, model, thinking }),
+          body: JSON.stringify({ messages: apiMessages, code, language, model, thinking, behavior }),
           signal: controller.signal,
         })
       } finally {
@@ -169,7 +169,7 @@ useEffect(() => {
       // If planning mode is on, plan first
       if (planningMode && onPlanReady) {
         const planResult = await planTask(
-          { prompt: text, files, activeFile, history: messages, model, thinking },
+  { prompt: text, files, activeFile, history: messages, model, thinking, behavior },
           (_chunk, full) => {
             let hint = 'Analyzing project…'
             if (full.length > 200) hint = 'Drafting plan…'
@@ -200,7 +200,7 @@ useEffect(() => {
 
       // Fallback: direct agent (no planning)
       const plan = await streamAgent(
-  { prompt: text, files, activeFile, history: messages, model, thinking },
+  { prompt: text, files, activeFile, history: messages, model, thinking, behavior },
   (_chunk, full) => {
           let hint = 'Analyzing project…'
           if (full.length > 200) hint = 'Planning changes…'

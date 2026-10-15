@@ -12,8 +12,9 @@ export const DEFAULT_SETTINGS = {
   autoSaveDelay: 800,   // ms
   theme: 'emerald',     // 'emerald' | 'blue' | 'purple' | 'orange'
   reduceMotion: false,
-   model: 'openai/gpt-oss-20b',
-   thinking: 'medium',   // 'low' | 'medium' | 'high' | 'ultra'
+     model: 'openai/gpt-oss-20b',
+  thinking: 'medium',
+  behavior: 'friendly',
 }
 
 export function loadSettings() {

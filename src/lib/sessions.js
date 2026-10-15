@@ -117,25 +117,67 @@ export function loadSessions() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) {
-      // First launch — create a default session
       const session = createEmptySession()
       const store = { sessions: [session], activeSessionId: session.id }
       saveSessions(store)
       return store
     }
-    const parsed = JSON.parse(raw)
+
+    let parsed = JSON.parse(raw)
     if (!parsed || !Array.isArray(parsed.sessions) || parsed.sessions.length === 0) {
       const session = createEmptySession()
       return { sessions: [session], activeSessionId: session.id }
     }
+
+    // ---- MIGRATE each session to ensure it has required fields ----
+    parsed.sessions = parsed.sessions.map((s) => migrateSession(s))
+
     // Ensure activeSessionId points at a real session
     const hasActive = parsed.sessions.some((s) => s.id === parsed.activeSessionId)
     if (!hasActive) parsed.activeSessionId = parsed.sessions[0].id
+
     return parsed
   } catch (err) {
     console.warn('loadSessions failed:', err)
     const session = createEmptySession()
     return { sessions: [session], activeSessionId: session.id }
+  }
+}
+
+function migrateSession(s) {
+  if (!s || typeof s !== 'object') return s
+
+  const now = Date.now()
+
+  // Ensure messages is an array with valid entries
+  let messages = Array.isArray(s.messages) ? s.messages : []
+  if (messages.length === 0) {
+    messages = [{
+      role: 'assistant',
+      text: "Hey! I'm Stream. Ask me anything, or switch to Agent mode to make changes to your files.",
+      time: now,
+    }]
+  }
+  // Clean up each message — ensure time exists
+  messages = messages
+    .filter((m) => m && typeof m === 'object' && typeof m.text === 'string')
+    .map((m) => ({
+      role: m.role === 'user' ? 'user' : 'assistant',
+      text: m.text,
+      time: m.time || now,
+      ...(m._status ? { _status: true } : {}),
+    }))
+
+  return {
+    id: s.id || Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
+    title: s.title || 'New session',
+    createdAt: s.createdAt || now,
+    updatedAt: s.updatedAt || now,
+    messages,
+    files: s.files && typeof s.files === 'object' ? s.files : {},
+    openTabs: Array.isArray(s.openTabs) ? s.openTabs : [],
+    activeFile: typeof s.activeFile === 'string' ? s.activeFile : '',
+    history: Array.isArray(s.history) ? s.history : [],
   }
 }
 

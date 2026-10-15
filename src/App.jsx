@@ -54,6 +54,7 @@ import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
+import BehaviorSwitcher from './components/BehaviorSwitcher'
 import { startCheckout, redirectToCheckout } from './lib/paystack'
 
 function AppInner() {
@@ -125,24 +126,48 @@ function AppInner() {
   const messages = activeSession.messages || []
 
   // Setters that patch the active session
-  const setFiles = (updater) => {
-    const nextFiles = typeof updater === 'function' ? updater(files) : updater
-    setSessionStore((s) => updateSession(s, s.activeSessionId, { files: nextFiles }))
+   const setFiles = (updater) => {
+    setSessionStore((s) => {
+      const active = s.sessions.find((x) => x.id === s.activeSessionId)
+      if (!active) return s
+      const current = active.files || {}
+      const next = typeof updater === 'function' ? updater(current) : updater
+      return updateSession(s, s.activeSessionId, { files: next })
+    })
   }
+
   const setOpenTabs = (updater) => {
-    const next = typeof updater === 'function' ? updater(openTabs) : updater
-    setSessionStore((s) => updateSession(s, s.activeSessionId, { openTabs: next }))
+    setSessionStore((s) => {
+      const active = s.sessions.find((x) => x.id === s.activeSessionId)
+      if (!active) return s
+      const current = active.openTabs || []
+      const next = typeof updater === 'function' ? updater(current) : updater
+      return updateSession(s, s.activeSessionId, { openTabs: next })
+    })
   }
+
   const setActiveFile = (next) => {
     setSessionStore((s) => updateSession(s, s.activeSessionId, { activeFile: next }))
   }
+
   const setHistory = (updater) => {
-    const next = typeof updater === 'function' ? updater(history) : updater
-    setSessionStore((s) => updateSession(s, s.activeSessionId, { history: next }))
+    setSessionStore((s) => {
+      const active = s.sessions.find((x) => x.id === s.activeSessionId)
+      if (!active) return s
+      const current = active.history || []
+      const next = typeof updater === 'function' ? updater(current) : updater
+      return updateSession(s, s.activeSessionId, { history: next })
+    })
   }
+
   const setMessages = (updater) => {
-    const next = typeof updater === 'function' ? updater(messages) : updater
-    setSessionStore((s) => updateSession(s, s.activeSessionId, { messages: next }))
+    setSessionStore((s) => {
+      const active = s.sessions.find((x) => x.id === s.activeSessionId)
+      if (!active) return s
+      const current = active.messages || []
+      const next = typeof updater === 'function' ? updater(current) : updater
+      return updateSession(s, s.activeSessionId, { messages: next })
+    })
   }
 
     // ---- Checkout ----
@@ -203,9 +228,15 @@ const [testProgress, setTestProgress] = useState(null) // null | { step, message
 const isMobile = useMobile(768)
 const [showLogin, setShowLogin] = useState(false)
   // ---- Cloud sync: on sign-in, load remote sessions (merge guest once) ----
+  // ---- Cloud sync: on sign-in, load remote sessions ----
+  // IMPORTANT: keyed on user.id so it ONLY runs when the user changes,
+  // not on every token refresh or object identity change.
+  const lastSyncUserIdRef = useRef(null)
+
   useEffect(() => {
     if (!user) {
       setSyncReady(false)
+      lastSyncUserIdRef.current = null
       return
     }
     if (!isSyncAvailable()) {
@@ -213,49 +244,73 @@ const [showLogin, setShowLogin] = useState(false)
       return
     }
 
+    // Already synced for this user — skip
+    if (lastSyncUserIdRef.current === user.id) return
+    lastSyncUserIdRef.current = user.id
+
     let cancelled = false
 
     ;(async () => {
       setSyncing(true)
       try {
+        console.log('[sync] loading for user', user.id)
         const remote = await loadRemoteSessions()
+        console.log('[sync] remote sessions:', remote.length)
 
         if (cancelled) return
 
-        // If user has never merged their guest sessions, do it now
+        // Get current sessions from the store
+        let localSessions = []
+        setSessionStore((s) => {
+          localSessions = s.sessions
+          return s
+        })
+
         const shouldMerge = !hasMergedGuestSessions()
+        const remoteIds = new Set(remote.map((s) => s.id))
+        const localOnly = localSessions.filter((s) => !remoteIds.has(s.id))
 
-        if (shouldMerge) {
-          const localSessions = sessionStore.sessions
-          // Upload local sessions not already present in remote
-          const remoteIds = new Set(remote.map((s) => s.id))
-          const toUpload = localSessions.filter((s) => !remoteIds.has(s.id))
+        console.log('[sync] shouldMerge:', shouldMerge, 'localOnly:', localOnly.length)
 
-          if (toUpload.length > 0) {
-            await uploadSessionBatch(toUpload, user.id)
-          }
+        // Upload local-only sessions if this is the first merge
+        if (shouldMerge && localOnly.length > 0) {
+          console.log('[sync] uploading', localOnly.length, 'local sessions')
+          await uploadSessionBatch(localOnly, user.id)
           markGuestSessionsMerged()
 
-          // After upload, reload remote to get everything
           const merged = await loadRemoteSessions()
-          if (!cancelled) {
-            setSessionStore({
-              sessions: merged.length > 0 ? merged : sessionStore.sessions,
-              activeSessionId: merged[0]?.id || sessionStore.activeSessionId,
-            })
+          console.log('[sync] after merge, remote has', merged.length)
+          if (!cancelled && merged.length > 0) {
+            setSessionStore((prev) => ({
+              sessions: merged,
+              activeSessionId: merged.find((r) => r.id === prev.activeSessionId)?.id || merged[0].id,
+            }))
           }
         } else if (remote.length > 0) {
-          // Just switch to remote set
-          setSessionStore((s) => ({
-            sessions: remote,
-            activeSessionId: remote.find((r) => r.id === s.activeSessionId)?.id || remote[0].id,
-          }))
+          // Pure load: use remote set, BUT merge with local if local has more messages
+          setSessionStore((prev) => {
+            const merged = remote.map((r) => {
+              const local = prev.sessions.find((s) => s.id === r.id)
+              if (local && Array.isArray(local.messages) && Array.isArray(r.messages)) {
+                // Keep whichever has more messages
+                if (local.messages.length > r.messages.length) {
+                  return { ...r, messages: local.messages }
+                }
+              }
+              return r
+            })
+            return {
+              sessions: merged,
+              activeSessionId: merged.find((x) => x.id === prev.activeSessionId)?.id || merged[0].id,
+            }
+          })
         }
+        // If both are empty — do nothing (keep local)
 
         setSyncReady(true)
       } catch (err) {
-        console.warn('Cloud sync load failed:', err)
-        setSyncReady(true) // fall back to local only
+        console.warn('[sync] failed:', err)
+        setSyncReady(true)
       } finally {
         if (!cancelled) setSyncing(false)
       }
@@ -264,7 +319,7 @@ const [showLogin, setShowLogin] = useState(false)
     return () => {
       cancelled = true
     }
-  }, [user])
+  }, [user?.id])
 
   const [busy, setBusy] = useState(false)
   const [status, setStatus] = useState('Ready')
@@ -1004,7 +1059,11 @@ case 'importZip': setShowImport(true); break
   onChange={(t) => setSettings((s) => ({ ...s, thinking: t }))}
   disabled={busy}
 />
-
+<BehaviorSwitcher
+  value={settings.behavior || 'friendly'}
+  onChange={(b) => setSettings((s) => ({ ...s, behavior: b }))}
+  disabled={busy}
+/>
         <button
           className="topbar-btn"
           disabled={!activeFile}
@@ -1152,6 +1211,7 @@ case 'importZip': setShowImport(true); break
           onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
           model={settings.model}
           thinking={settings.thinking || 'medium'}
+          behavior={settings.behavior || 'friendly'}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
           planningMode={true}
@@ -1246,6 +1306,7 @@ case 'importZip': setShowImport(true); break
         activeFile={activeFile}
         messages={messages}
         setMessages={setMessages}
+                behavior={settings.behavior || 'friendly'}
         sessionTitle={activeSession.title}
         onFirstMessage={(text) => {
           if (activeSession.title === 'New session') {
@@ -1300,24 +1361,39 @@ case 'importZip': setShowImport(true); break
             setPlanningStepLogs((s) => ({ ...s, [step.id]: `Running: ${step.title}…` }))
 
             try {
-              const result = await executeStep(
-                {
-                  step,
-                  plan: pendingPlanning.plan,
-                  allSteps: steps,
-                  files: currentFiles,
-                  activeFile,
-                  model: settings.model,
-                  thinking: settings.thinking || 'medium',
-                  originalPrompt: pendingPlanning.originalPrompt,
-                },
-                (_chunk, full) => {
-                  setPlanningStepLogs((s) => ({
-                    ...s,
-                    [step.id]: `Writing… (${full.length} chars)`,
-                  }))
-                }
-              )
+              const stepStartTime = Date.now()
+              const slowTimer = setTimeout(() => {
+                setPlanningStepLogs((s) => ({
+                  ...s,
+                  [step.id]: `Still working — this step is complex, retrying if needed…`,
+                }))
+              }, 8000)
+
+              let result
+              try {
+                result = await executeStep(
+                  {
+                    step,
+                    plan: pendingPlanning.plan,
+                    allSteps: steps,
+                    files: currentFiles,
+                    activeFile,
+                    model: settings.model,
+                    thinking: settings.thinking || 'medium',
+                    originalPrompt: pendingPlanning.originalPrompt,
+                    behavior: settings.behavior || 'friendly',
+                  },
+                  (_chunk, full) => {
+                    clearTimeout(slowTimer)
+                    setPlanningStepLogs((s) => ({
+                      ...s,
+                      [step.id]: `Writing… (${full.length} chars)`,
+                    }))
+                  }
+                )
+              } finally {
+                clearTimeout(slowTimer)
+              }
 
               // Apply the step's operations
               const ops = Array.isArray(result.operations) ? result.operations : []
@@ -1353,6 +1429,45 @@ case 'importZip': setShowImport(true); break
               }))
             } catch (err) {
               console.error(`Step ${step.id} failed:`, err)
+
+              // Try auto-split: if this step has multiple files, split into two
+              const stepFiles = Array.isArray(step.files) ? step.files : []
+              const canSplit = stepFiles.length >= 2
+
+              if (canSplit) {
+                setPlanningStepLogs((s) => ({
+                  ...s,
+                  [step.id]: `✕ Failed — splitting into smaller steps…`,
+                }))
+
+                const mid = Math.ceil(stepFiles.length / 2)
+                const parts = [
+                  {
+                    id: `${step.id}.1`,
+                    title: `${step.title} (part 1)`,
+                    description: `Create: ${stepFiles.slice(0, mid).join(', ')}`,
+                    files: stepFiles.slice(0, mid),
+                    _substep: true,
+                  },
+                  {
+                    id: `${step.id}.2`,
+                    title: `${step.title} (part 2)`,
+                    description: `Create: ${stepFiles.slice(mid).join(', ')}`,
+                    files: stepFiles.slice(mid),
+                    _substep: true,
+                  },
+                ]
+
+                // Insert substeps into the loop by mutating the steps array
+                steps.splice(i + 1, 0, ...parts)
+                setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
+                setPlanningStepLogs((s) => ({
+                  ...s,
+                  [step.id]: `✕ Split into 2 smaller steps`,
+                }))
+                continue
+              }
+
               setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
               setPlanningStepLogs((s) => ({ ...s, [step.id]: `✕ ${err.message}` }))
               setPlanningError(`Step ${step.id} failed: ${err.message}`)

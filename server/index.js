@@ -52,13 +52,65 @@ const groq = new Groq({
 })
 
 // ============================================================
-// esbuild-wasm init
+// AI BEHAVIORAL MODES
 // ============================================================
+const BEHAVIORAL_MODES = {
+  professional: {
+    label: 'Professional',
+    prefix: 'Tone: Direct, efficient, business-like. Skip pleasantries. Get to the point.',
+  },
+  friendly: {
+    label: 'Friendly',
+    prefix: 'Tone: Warm, encouraging, casual. Use natural language, occasional light humor. Celebrate progress. Still be accurate and honest.',
+  },
+  teacher: {
+    label: 'Teacher',
+    prefix: 'Tone: Patient, thorough, explanatory. Explain WHY not just what. Assume the user is learning. Prefer clarity over brevity.',
+  },
+  concise: {
+    label: 'Concise',
+    prefix: 'Tone: Maximum brevity. Shortest accurate answer. No preamble, no filler.',
+  },
+  creative: {
+    label: 'Creative',
+    prefix: 'Tone: Curious, exploratory, suggestive. Offer multiple approaches. Highlight tradeoffs. Playful with names but technically rigorous.',
+  },
+}
+
+function getBehavioralPrefix(mode) {
+  const m = BEHAVIORAL_MODES[mode] || BEHAVIORAL_MODES.friendly
+  return `\n\n## BEHAVIORAL MODE — ${m.label}\n${m.prefix}\n`
+}
+
+// ------------------------------------------------------------
+// Retry wrapper
+// ------------------------------------------------------------
+async function callGroqWithRetry(params, maxAttempts = 3) {
+  let lastErr
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await groq.chat.completions.create(params)
+    } catch (err) {
+      lastErr = err
+      const isRetryable =
+        err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 ||
+        err.message?.includes('validate JSON') || err.message?.includes('rate_limit')
+      if (!isRetryable || attempt === maxAttempts) throw err
+      const retryAfter = err.headers?.['retry-after']
+        ? parseInt(err.headers['retry-after']) * 1000
+        : 1500 * attempt
+      console.log(`[ai] attempt ${attempt} failed, retrying in ${retryAfter}ms`)
+      await new Promise((r) => setTimeout(r, retryAfter))
+    }
+  }
+  throw lastErr
+}
+
 const esbuildReady = true
 console.log('✅ esbuild ready')
 
 // ============================================================
-// IN-MEMORY STATE
+// STATE
 // ============================================================
 const previewSessions = new Map()
 const previewErrors = new Map()
@@ -68,9 +120,7 @@ const BUNDLE_CACHE_MS = 10 * 1000
 setInterval(() => {
   const now = Date.now()
   for (const [id, session] of previewSessions.entries()) {
-    if (now - session.updatedAt > 2 * 60 * 60 * 1000) {
-      previewSessions.delete(id)
-    }
+    if (now - session.updatedAt > 2 * 60 * 60 * 1000) previewSessions.delete(id)
   }
 }, 5 * 60 * 1000)
 
@@ -84,28 +134,17 @@ function buildConsoleShim(sessionId) {
     '  var SESSION = ' + sessionJson + ';',
     '  var send = function(level, args) {',
     '    try {',
-    '      fetch("/api/preview/log", {',
-    '        method: "POST",',
-    '        headers: { "Content-Type": "application/json" },',
-    '        body: JSON.stringify({',
-    '          sessionId: SESSION,',
-    '          level: level,',
-    '          text: args.map(function(a) {',
-    '            try { return typeof a === "string" ? a : JSON.stringify(a) } catch (e) { return String(a) }',
-    '          }).join(" ")',
-    '        })',
+    '      fetch("/api/preview/log", { method: "POST", headers: { "Content-Type": "application/json" },',
+    '        body: JSON.stringify({ sessionId: SESSION, level: level,',
+    '          text: args.map(function(a) { try { return typeof a === "string" ? a : JSON.stringify(a) } catch (e) { return String(a) } }).join(" ") })',
     '      }).catch(function() {})',
     '    } catch (e) {}',
     '  };',
-    '  var origLog = console.log;',
-    '  var origErr = console.error;',
-    '  var origWarn = console.warn;',
+    '  var origLog = console.log; var origErr = console.error; var origWarn = console.warn;',
     '  console.log = function() { send("log", Array.prototype.slice.call(arguments)); origLog.apply(console, arguments); };',
     '  console.error = function() { send("error", Array.prototype.slice.call(arguments)); origErr.apply(console, arguments); };',
     '  console.warn = function() { send("warn", Array.prototype.slice.call(arguments)); origWarn.apply(console, arguments); };',
-    '  window.onerror = function(msg, src, line, col, err) {',
-    '    send("error", [msg + " (line " + line + ")"])',
-    '  };',
+    '  window.onerror = function(msg, src, line, col, err) { send("error", [msg + " (line " + line + ")"]) };',
     '  window.addEventListener("unhandledrejection", function(e) {',
     '    send("error", ["Unhandled promise rejection: " + (e.reason && e.reason.message || e.reason)])',
     '  });',
@@ -115,34 +154,22 @@ function buildConsoleShim(sessionId) {
 
 function rewriteHtmlPaths(html, sessionId) {
   const prefix = `/preview/${sessionId}`
-
   html = html.replace(
     /(<link[^>]+href=["'])(?!https?:|\/\/|#|data:)([^"']+)(["'])/gi,
-    (m, before, url, after) => {
-      const clean = url.startsWith('/') ? url.slice(1) : url
-      return `${before}${prefix}/${clean}${after}`
-    }
+    (m, before, url, after) => `${before}${prefix}/${url.startsWith('/') ? url.slice(1) : url}${after}`
   )
-
   html = html.replace(
     /(<script[^>]+src=["'])(?!https?:|\/\/)([^"']+)(["'])/gi,
     (m, before, url, after) => {
       const clean = url.startsWith('/') ? url.slice(1) : url
-      if (/\.(jsx?|tsx?|mjs)$/i.test(clean)) {
-        return `${before}${prefix}/bundle/${clean}${after}`
-      }
+      if (/\.(jsx?|tsx?|mjs)$/i.test(clean)) return `${before}${prefix}/bundle/${clean}${after}`
       return `${before}${prefix}/${clean}${after}`
     }
   )
-
   html = html.replace(
     /(<img[^>]+src=["'])(?!https?:|\/\/|data:)([^"']+)(["'])/gi,
-    (m, before, url, after) => {
-      const clean = url.startsWith('/') ? url.slice(1) : url
-      return `${before}${prefix}/${clean}${after}`
-    }
+    (m, before, url, after) => `${before}${prefix}/${url.startsWith('/') ? url.slice(1) : url}${after}`
   )
-
   return html
 }
 
@@ -155,28 +182,22 @@ function stripViteInjections(html) {
 
 function buildPreviewHtml(files, activeFile, sessionId) {
   let htmlPath = null
-  if (activeFile && files[activeFile] && activeFile.endsWith('.html')) {
-    htmlPath = activeFile
-  }
+  if (activeFile && files[activeFile] && activeFile.endsWith('.html')) htmlPath = activeFile
   if (!htmlPath) {
     htmlPath =
       Object.keys(files).find((p) => p === 'public/index.html') ||
       Object.keys(files).find((p) => p === 'index.html') ||
       Object.keys(files).find((p) => p.endsWith('.html'))
   }
-
   let html = htmlPath
     ? files[htmlPath].content
     : `<!DOCTYPE html><html><head></head><body><div id="root"></div></body></html>`
-
   html = stripViteInjections(html)
   html = rewriteHtmlPaths(html, sessionId)
-
   const shim = buildConsoleShim(sessionId)
   html = html.includes('</head>')
     ? html.replace('</head>', `<script>${shim}</script></head>`)
     : `<script>${shim}</script>${html}`
-
   return html
 }
 
@@ -185,52 +206,44 @@ function buildPreviewHtml(files, activeFile, sessionId) {
 // ============================================================
 
 app.post('/api/chat', async (req, res) => {
-  const { messages, code, language, model, thinking } = req.body
+  const { messages, code, language, model, thinking, behavior } = req.body
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
   const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
-  const systemPrompt = `You are Stream, a knowledgeable coding assistant inside a browser-based code editor.
-
-## WHO YOU ARE
-Senior dev pair-programmer. Honest, concise, adaptive.
+  const behavioralSuffix = getBehavioralPrefix(behavior)
+  const systemPrompt = `You are Stream, a coding assistant inside a browser-based editor.
 
 ## WHAT YOU DO
-- Answer questions about their code, explain concepts, help plan.
+- Answer questions about code, explain concepts, help plan.
 - If they ask you to build/change code, say: "Switch to Agent mode — I'll write it into your editor so you can review."
 - Don't dump full files. Short snippets only (2-5 lines).
 
 ## TONE
-Concise. No filler. Use \`code\` formatting for identifiers. Honest if their code is buggy.
+Concise. Use \`code\` for identifiers. Honest if their code is buggy.
 
 ${language ? `## CURRENT FILE\nLanguage: ${language}` : ''}
-${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}`
+${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}${behavioralSuffix}`
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await groq.chat.completions.create({
+    const stream = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: systemPrompt }, ...messages],
       stream: true,
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
     })
-        let totalChars = 0
+    let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) {
-        totalChars += text.length
-        res.write(`data: ${JSON.stringify({ text })}\n\n`)
-      }
+      if (text) { totalChars += text.length; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
     }
-    if (totalChars === 0) {
-      console.error('Execute-step: empty response from Groq')
-      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step or lower thinking level.' })}\n\n`)
-    }
+    if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response.' })}\n\n`)
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
@@ -270,7 +283,7 @@ app.post('/api/edit', async (req, res) => {
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await groq.chat.completions.create({
+    const stream = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userPrompt }],
       stream: true,
@@ -292,14 +305,14 @@ app.post('/api/edit', async (req, res) => {
 })
 
 app.post('/api/agent', async (req, res) => {
-  const { prompt, files, activeFile, history, model, thinking } = req.body
+  const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
   const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
   const MAX_FILE_CHARS = 2000
-  const MAX_TOTAL_CHARS = 10000
+  const MAX_TOTAL_CHARS = 8000
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
@@ -328,53 +341,28 @@ You respond with ONLY a JSON object:
 No markdown, no fences, no prose outside JSON.
 
 ## RULES
-- Paths relative to project root ("src/App.jsx", not "/src/App.jsx").
+- Paths relative to project root ("src/App.jsx").
 - FULL file content for write_file / create_file.
-- Never both create_file AND write_file for the same path.
 - Prefer editing existing files over creating new ones.
-- Only touch files that MUST change.
-- Match existing style + language.
-- No placeholders, no "// TODO", no fake names.
-- All imports must reference existing or co-created files.
+- No placeholders, no fake names.
 
 ## HTML + REACT RULES
+Preview supports JSX/TS/React via esbuild.
 
-The preview supports ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
+Allowed: <script type="module" src="app.jsx"></script>, plain <script src="app.js"></script>, <link rel="stylesheet" href="styles.css">
+NOT allowed: /@vite/client, /@react-refresh, absolute paths starting /src/ or /public/
 
-Allowed in HTML:
-- <script type="module" src="app.jsx"></script>  (bundler handles JSX/TS)
-- <script type="module" src="src/main.jsx"></script>
-- Plain <script src="app.js"></script>
-- <link rel="stylesheet" href="styles.css">
-
-NOT allowed in HTML:
-- /@vite/client script
-- /@react-refresh script
-- Absolute paths starting with /src/ or /public/ — use relative paths
-
-For React apps:
-- Import React from a CDN with a full URL: import React from 'https://esm.sh/react@18'
-- Import ReactDOM the same way: import { createRoot } from 'https://esm.sh/react-dom@18/client'
-- NEVER use bare imports like import React from 'react' — the bundler leaves them external and the browser cannot resolve them
-- Put JSX in .jsx files, not .js or .html
-- Entry pattern: an HTML file with <div id="root"></div> and <script type="module" src="main.jsx"></script>, and main.jsx that mounts a component
-
-## WHEN TO DECLINE
-- Unclear → operations: [], explanation asks clarifying question.
-- Impossible → operations: [], explanation explains why.
-- Already done → operations: [], explanation says so.`
+For React:
+- import React from 'https://esm.sh/react@18'
+- import { createRoot } from 'https://esm.sh/react-dom@18/client'
+- NEVER bare imports like import React from 'react'
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
-  const USER = `Project files:
-
-${fileList}
-
-${activeFile ? `User's currently open file: ${activeFile}\n` : ''}
-User request: ${prompt}`
-
+  const USER = `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
   conversation.push({ role: 'user', content: USER })
 
   res.setHeader('Content-Type', 'text/event-stream')
@@ -382,26 +370,21 @@ User request: ${prompt}`
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await groq.chat.completions.create({
+    const stream = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: thinking === 'ultra' ? 16384 : thinking === 'high' ? 10000 : 4096,
+      max_tokens: thinking === 'ultra' ? 8000 : thinking === 'high' ? 6000 : 4096,
       reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
-          })
+      response_format: { type: 'json_object' },
+    })
     let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) {
-        totalChars += text.length
-        res.write(`data: ${JSON.stringify({ text })}\n\n`)
-      }
+      if (text) { totalChars += text.length; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
     }
-    if (totalChars === 0) {
-      console.error('Agent: empty response from Groq')
-      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try again.' })}\n\n`)
-    }
+    if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response.' })}\n\n`)
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
@@ -412,18 +395,15 @@ User request: ${prompt}`
   }
 })
 
-// ------------------------------------------------------------
-// Planning endpoint — AI breaks the task into steps
-// ------------------------------------------------------------
 app.post('/api/agent/plan', async (req, res) => {
-  const { prompt, files, activeFile, history, model, thinking } = req.body
+  const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
   const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
-  const MAX_FILE_CHARS = 2000
-  const MAX_TOTAL_CHARS = 12000
+  const MAX_FILE_CHARS = 1000
+  const MAX_TOTAL_CHARS = 3000
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
@@ -437,69 +417,43 @@ app.post('/api/agent/plan', async (req, res) => {
 
   const SYSTEM = `You are Stream Planner, an expert software architect.
 
-Your job: take a user's request and produce a STEP-BY-STEP PLAN. Do NOT write any code. Do NOT create files. ONLY plan.
+Produce a STEP-BY-STEP PLAN. Do NOT write code. ONLY plan.
 
 Respond with ONLY a JSON object:
 
 {
-  "title": "Short title of the task",
-  "summary": "1-2 sentence overview of what will be built",
+  "title": "Short title",
+  "summary": "1-2 sentence overview",
   "estimatedFiles": 5,
   "steps": [
-    {
-      "id": 1,
-      "title": "Short step title (imperative, e.g. 'Create index.html')",
-      "description": "One sentence: what this step does and what files it touches",
-      "files": ["index.html"]
-    },
-    {
-      "id": 2,
-      "title": "Create styles.css",
-      "description": "Dark theme, typography, layout, responsive grid.",
-      "files": ["styles.css"]
-    }
+    { "id": 1, "title": "Create index.html", "description": "One sentence", "files": ["index.html"] }
   ]
 }
 
 ## RULES
-
-- Aim for 3-8 steps. Each step should produce 1-3 files.
-- Group related files into a single step (e.g. "Create all HTML pages" not "Create page 1, create page 2, create page 3").
-- Order matters: foundational files first (HTML structure → CSS → JS → linking).
-- Steps must be SMALL enough that one step's code fits in ~4k tokens.
-- Every file must appear in exactly ONE step.
-- Do NOT include a "review" or "test" step — execution is automatic.
-- Be specific about what each file contains.
+- 3-8 steps. Each step produces 1-3 files.
+- Group related files into one step.
+- Order: foundational → structure → logic.
+- Steps must be small enough to fit ~4k tokens of code.
+- Every file appears in exactly ONE step.
+- No "review" or "test" step.
 
 ## CONTEXT
+If files already exist, plan to EDIT them, not recreate them.
 
-You may be given the current state of the project. If files already exist, plan to EDIT them or ADD to them, not recreate them.
+## TECHNOLOGY
+Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
+- Simple sites → plain HTML/CSS/JS
+- Interactive apps → React with CDN imports
+- Games/3D → canvas/WebGL or Three.js from CDN
 
-If the request is small (<3 files), still respond with a plan — even if it's 1-2 steps.
-
-## TECHNOLOGY CHOICE
-
-The preview supports real ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
-
-- For simple sites → plain HTML/CSS/JS is fine
-- For interactive apps → React (via CDN ESM imports) is supported
-- For games/3D → plain canvas/WebGL or Three.js from CDN works
-
-Plan the tech stack that best fits the request. Don't avoid React just because it "used to" break previews — that's fixed now.
-
-No markdown. No fences. No prose outside JSON.`
+No markdown. No fences. No prose outside JSON.${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
-  const USER = `Project files:
-
-${fileList}
-
-${activeFile ? `User's currently open file: ${activeFile}\n` : ''}
-User request: ${prompt}`
-
+  const USER = `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
   conversation.push({ role: 'user', content: USER })
 
   res.setHeader('Content-Type', 'text/event-stream')
@@ -507,33 +461,28 @@ User request: ${prompt}`
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await groq.chat.completions.create({
+    const stream = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: 3000,
+      max_tokens: 2500,
       reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
+      response_format: { type: 'json_object' },
     })
     let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) {
-        totalChars += text.length
-        res.write(`data: ${JSON.stringify({ text })}\n\n`)
-      }
+      if (text) { totalChars += text.length; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
     }
-    if (totalChars === 0) {
-      console.error('Plan: empty response from Groq')
-      res.write(`data: ${JSON.stringify({ error: 'AI returned empty plan. Try again.' })}\n\n`)
-    }
+    if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty plan.' })}\n\n`)
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Plan error:', err)
     const msg = err.message?.includes('validate JSON')
-      ? 'The AI had trouble formatting its plan. Please try rephrasing your request or try again.'
+      ? 'AI had trouble formatting the plan. Try again or rephrase.'
       : err.message || 'Planning failed'
     res.write(`data: ${JSON.stringify({ error: msg })}\n\n`)
     res.end()
@@ -548,18 +497,17 @@ app.post('/api/agent/test', async (req, res) => {
   res.json({ ok: true, previewUrl: `/preview/${sessionId}` })
 })
 
-// ------------------------------------------------------------
-// Execute ONE step of a plan
-// ------------------------------------------------------------
 app.post('/api/agent/execute-step', async (req, res) => {
-  const { step, plan, allSteps, files, activeFile, model, thinking, originalPrompt } = req.body
+  const { step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior } = req.body
   const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
   const limit = await checkLimit(req, thinkingCost)
   if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
   if (!step) return res.status(400).json({ error: 'step required' })
 
-  const MAX_FILE_CHARS = 4000
-  const MAX_TOTAL_CHARS = 6000
+  const stepText = `${step.title} ${step.description} ${(step.files || []).join(' ')}`
+  const stepComplexity = stepText.length
+  const MAX_FILE_CHARS = stepComplexity > 200 ? 800 : 2000
+  const MAX_TOTAL_CHARS = stepComplexity > 200 ? 2500 : 5000
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
@@ -578,23 +526,20 @@ app.post('/api/agent/execute-step', async (req, res) => {
   const SYSTEM = `You are Stream Agent executing ONE STEP of a multi-step plan.
 
 ## THE FULL PLAN
-
 ${stepsSummary}
 
 ## YOUR CURRENT STEP
-
 Step ${step.id}: ${step.title}
 Description: ${step.description}
 Files to produce: ${(step.files || []).join(', ')}
 
 ## YOUR JOB
-
-Execute ONLY this step. Produce the files listed in this step. Do NOT jump ahead to later steps. Do NOT touch files that aren't in this step's list. (Except: you MAY edit an existing file to add imports/hooks that later steps need.)
+Execute ONLY this step. Produce the files listed.
 
 Respond with ONLY a JSON object:
 
 {
-  "explanation": "one-line summary of what you did in this step",
+  "explanation": "one-line summary",
   "operations": [
     { "type": "create_file", "path": "index.html", "content": "..." },
     { "type": "write_file",  "path": "styles.css", "content": "..." }
@@ -602,133 +547,28 @@ Respond with ONLY a JSON object:
 }
 
 ## RULES
-
 - FULL file content for create_file / write_file. No snippets, no diffs.
-- Match the existing project's style and language.
-- All imports must reference files that exist OR are being created in this plan.
+- Match existing style and language.
 - No placeholders, no "// TODO", no fake names.
-- If this step only creates files, list only create_file operations.
-- If this step modifies existing files, use write_file with the full new content.
 
 ## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains SOURCE CODE.
-
-RULES:
-- Escape newlines inside content strings as \n (backslash-n)
-- Escape double quotes inside content strings as \" (backslash-quote)
-- Escape backslashes as \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-CRITICAL: Do NOT put literal \n or \" characters INSIDE the code you generate. The \n and \" are JSON-level escapes that the parser converts to real newlines and quotes. If you write them literally inside HTML or JS, they will appear as visible "\n" text.
-
-For example, if the file content should be:
-    <!DOCTYPE html>
-    <html>
-
-Then in JSON it should be written as:
-    "content": "<!DOCTYPE html>\n<html>"
-
-NOT as:
-    "content": "<!DOCTYPE html>\\n<html>"  ← WRONG (double-escaped)
-NOT as:
-    "content": "<!DOCTYPE html>\\\n<html>"  ← WRONG
-
-Double-check your JSON before responding. Invalid JSON = failed step.
-
-## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains source code.
-
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
-
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
-
-## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains source code.
-
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
-
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
-
-## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains source code.
-
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
-
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
-
-## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains source code.
-
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
-
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
-
-## JSON ESCAPING — CRITICAL
-
-Your response must be VALID JSON. The content field contains source code.
-
-- Every newline in code MUST be \n (backslash-n), not an actual newline
-- Every double quote in code MUST be \" (backslash-quote)
-- Every backslash in code MUST be \\ (double backslash)
-- No trailing commas
-- No comments outside the JSON
-
-If you write JS code with double quotes inside it, they MUST be escaped: "content": "const x = \\"hello\\""
-
-Double-check your JSON before responding. Invalid JSON = failed step = user frustrated.
+- Newlines in content strings must be \\n (backslash-n), not literal newlines.
+- Double quotes in content strings must be \\" (backslash-quote).
+- Backslashes must be \\\\ (double backslash).
+- No trailing commas.
+- Never write literal "\\n" as text inside your generated code — it must be actual content.
 
 ## HTML + REACT RULES
+Allowed in HTML: <script type="module" src="app.jsx"></script>, plain <script src="app.js"></script>.
+NOT allowed: /@vite/client, /@react-refresh, absolute paths /src/ or /public/.
 
-The preview supports ES modules, JSX, TypeScript, and React via an in-browser esbuild bundler.
+For React:
+- import React from 'https://esm.sh/react@18'
+- import { createRoot } from 'https://esm.sh/react-dom@18/client'
+- NEVER use bare imports.
+- JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-Allowed in HTML:
-- <script type="module" src="app.jsx"></script>
-- <script type="module" src="src/main.jsx"></script>
-- Plain <script src="app.js"></script>
-
-NOT allowed in HTML:
-- /@vite/client script
-- /@react-refresh script
-- Absolute paths starting with /src/ or /public/ — use relative paths
-
-For React apps:
-- Import React from a CDN with a full URL: import React from 'https://esm.sh/react@18'
-- Import ReactDOM the same way: import { createRoot } from 'https://esm.sh/react-dom@18/client'
-- NEVER use bare imports like import React from 'react' — the bundler leaves them external and the browser cannot resolve them
-- Put JSX in .jsx files, not .js or .html
-- Entry: HTML file with <div id="root"></div> and <script type="module" src="main.jsx"></script>
-
-No markdown. No fences. No prose outside JSON.`
+No markdown. No fences. No prose outside JSON.${getBehavioralPrefix(behavior)}`
 
   const USER = `Original user request: ${originalPrompt || '(unknown)'}
 
@@ -736,16 +576,16 @@ Current project files:
 
 ${fileList}
 
-${activeFile ? `User's currently open file: ${activeFile}\n` : ''}
+${activeFile ? `User's open file: ${activeFile}\n` : ''}
 
-Now execute step ${step.id} only.`
+Execute step ${step.id} only.`
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await groq.chat.completions.create({
+    const stream = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [
         { role: 'system', content: SYSTEM },
@@ -754,20 +594,14 @@ Now execute step ${step.id} only.`
       stream: true,
       temperature: 0.2,
       max_tokens: 3000,
-      
+      response_format: { type: 'json_object' },
     })
     let totalChars = 0
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) {
-        totalChars += text.length
-        res.write(`data: ${JSON.stringify({ text })}\n\n`)
-      }
+      if (text) { totalChars += text.length; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
     }
-    if (totalChars === 0) {
-      console.error('Execute-step: empty response from Groq')
-      res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step or lower thinking level.' })}\n\n`)
-    }
+    if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step.' })}\n\n`)
     res.write('data: [DONE]\n\n')
     recordUsage(req, thinkingCost)
     res.end()
@@ -784,28 +618,28 @@ app.post('/api/agent/diagnose', async (req, res) => {
 
   const errorList = Array.isArray(errors) && errors.length > 0
     ? errors.map((e) => `[${e.level}] ${e.text}`).join('\n')
-    : '(no console errors reported)'
+    : '(no console errors)'
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.log'))
-    .map(([p, f]) => `--- ${p} ---\n${(f.content || '').slice(0, 3000)}${(f.content || '').length > 3000 ? '\n…(truncated)' : ''}`)
+    .map(([p, f]) => `--- ${p} ---\n${(f.content || '').slice(0, 2000)}`)
     .join('\n\n')
-    .slice(0, 6000)
+    .slice(0, 5000)
 
   const SYSTEM = `You are Stream Agent in TEST mode.
 
-User asked: "${originalPrompt || '(unknown)'}"
+User asked: "${originalPrompt || '?'}"
 
-Console output from preview:
+Console output:
 ${errorList}
 
 Decide:
 - Fine → { "status": "ok", "summary": "short message" }
 - Broken → { "status": "fix", "summary": "what's wrong", "operations": [...] }
 
-Rules: only fix REAL errors. console.log is not an error. No HTML files → status: ok, "No previewable HTML". Respond with ONLY JSON.`
+Only fix REAL errors. console.log is not an error. Respond with ONLY JSON.`
 
-  const USER = `Attempt ${attempt || 1}. Active: ${activeFile || '?'}
+  const USER = `Attempt ${attempt || 1}.
 
 ${fileList}
 
@@ -813,11 +647,11 @@ Console:
 ${errorList}`
 
   try {
-    const completion = await groq.chat.completions.create({
+    const completion = await callGroqWithRetry({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
       temperature: 0.2,
-      max_tokens: 4096,
+      max_tokens: 3000,
       response_format: { type: 'json_object' },
     })
     const raw = completion.choices[0]?.message?.content || '{}'
@@ -861,25 +695,19 @@ app.get('/api/preview/bundle/:id/*entry', async (req, res) => {
   const sessionFiles = session.files
 
   try {
-    const entryNorm = resolvedEntry  // known session-relative path
+    const entryNorm = resolvedEntry
 
-  const plugin = {
-    name: 'session-files',
-    setup(build) {
-      build.onResolve({ filter: /.*/ }, (args) => {
-        // The entry itself must resolve as a session file, not external
-        if (args.kind === 'entry-point') {
-          return { path: entryNorm, namespace: 'session' }
-        }
-
-        // Bare imports (react, vue, etc.) → leave external
-        if (!args.path.startsWith('.') && !args.path.startsWith('/')) {
-          return { path: args.path, external: true }
-        }
+    const plugin = {
+      name: 'session-files',
+      setup(build) {
+        build.onResolve({ filter: /.*/ }, (args) => {
+          if (args.kind === 'entry-point') return { path: entryNorm, namespace: 'session' }
+          if (!args.path.startsWith('.') && !args.path.startsWith('/')) {
+            return { path: args.path, external: true }
+          }
           let resolved
-          if (args.path.startsWith('/')) {
-            resolved = args.path.slice(1)
-          } else {
+          if (args.path.startsWith('/')) resolved = args.path.slice(1)
+          else {
             const dir = args.importer ? path.dirname(args.importer) : '.'
             resolved = path.posix.normalize(path.posix.join(dir, args.path))
           }
@@ -933,7 +761,7 @@ app.get('/api/preview/bundle/:id/*entry', async (req, res) => {
 })
 
 // ============================================================
-// PREVIEW ENDPOINTS
+// PREVIEW
 // ============================================================
 app.post('/api/preview/session', (req, res) => {
   const { sessionId, files, activeFile } = req.body
@@ -983,7 +811,6 @@ app.get('/preview/:id/bundle/*entry', (req, res) => {
 app.get('/preview/:id/*filePath', (req, res) => {
   const session = previewSessions.get(req.params.id)
   if (!session) return res.status(404).send('Session not found')
-
   const rawPath = req.params.filePath
   const filePath = Array.isArray(rawPath) ? rawPath.join('/') : (rawPath || '')
   if (!filePath) return res.status(404).send('File not found')
@@ -1003,20 +830,17 @@ app.get('/preview/:id/*filePath', (req, res) => {
   if (!file) return res.status(404).send(`File not found: ${filePath}`)
 
   const ext = filePath.split('.').pop()?.toLowerCase()
-
   if (['js', 'jsx', 'ts', 'tsx', 'mjs'].includes(ext)) {
     return res.redirect(307, `/api/preview/bundle/${req.params.id}/${filePath}`)
   }
 
   const types = {
     html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8',
-    css: 'text/css; charset=utf-8',
-    json: 'application/json; charset=utf-8',
+    css: 'text/css; charset=utf-8', json: 'application/json; charset=utf-8',
     svg: 'image/svg+xml', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg',
     gif: 'image/gif', ico: 'image/x-icon',
     txt: 'text/plain; charset=utf-8', md: 'text/plain; charset=utf-8',
   }
-
   const contentType = types[ext] || 'text/plain; charset=utf-8'
   res.setHeader('Content-Type', contentType)
   res.setHeader('Cache-Control', 'no-cache')
@@ -1030,12 +854,11 @@ app.get('/preview/:id/*filePath', (req, res) => {
       : `<script>${shim}</script>${html}`
     return res.send(html)
   }
-
   res.send(file.content || '')
 })
 
 // ============================================================
-// SUBSCRIPTIONS (PAYSTACK)
+// SUBSCRIPTIONS
 // ============================================================
 const PLAN_CODES = {
   pro3x: process.env.PAYSTACK_PLAN_PRO3X || '',
@@ -1046,13 +869,10 @@ const PLAN_CODES = {
 app.post('/api/paystack/checkout', async (req, res) => {
   if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
   if (!paystackConfigured()) return res.status(503).json({ error: 'Payments not configured' })
-
   const { tier } = req.body
-  if (!PLAN_CODES[tier]) return res.status(400).json({ error: `Unknown or unconfigured tier: ${tier}` })
-
+  if (!PLAN_CODES[tier]) return res.status(400).json({ error: `Unknown tier: ${tier}` })
   const email = req.user.email
   if (!email) return res.status(400).json({ error: 'No email on account' })
-
   try {
     const AMOUNTS = { pro3x: 300000, pro5x: 500000, pro10x: 900000 }
     const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
@@ -1114,19 +934,16 @@ app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), asy
     const meta = data.metadata || {}
     const userId = meta.userId
     if (!userId) return
-
     if (event.event === 'charge.success') {
       await upsertSubscription(userId, {
-        tier: meta.tier,
-        status: 'active',
+        tier: meta.tier, status: 'active',
         paystack_customer_code: data.customer?.customer_code || null,
         current_period_end: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
       })
     }
     if (event.event === 'subscription.create') {
       await upsertSubscription(userId, {
-        tier: meta.tier || 'pro3x',
-        status: 'active',
+        tier: meta.tier || 'pro3x', status: 'active',
         paystack_subscription_code: data.subscription_code || null,
         paystack_email_token: data.email_token || null,
         current_period_end: data.next_payment_date || null,

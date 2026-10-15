@@ -1,11 +1,11 @@
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 
-export async function streamEdit({ action, code, selection, language, instruction, model, thinking }, onChunk) {
+export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/edit`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, code, selection, language, instruction, model, thinking }),
+    body: JSON.stringify({ action, code, selection, language, instruction, model, thinking, behavior }),
   })
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -37,11 +37,11 @@ export async function streamEdit({ action, code, selection, language, instructio
   }
 }
 
-export async function streamAgent({ prompt, files, activeFile, history, model, thinking }, onChunk) {
+export async function streamAgent({ prompt, files, activeFile, history, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/agent`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking }),
+    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking, behavior }),
   })
 
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -84,11 +84,11 @@ export async function streamAgent({ prompt, files, activeFile, history, model, t
   }
 }
 
-export async function planTask({ prompt, files, activeFile, history, model, thinking }, onChunk) {
+export async function planTask({ prompt, files, activeFile, history, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/agent/plan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking }),
+    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking, behavior }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
@@ -126,11 +126,11 @@ export async function planTask({ prompt, files, activeFile, history, model, thin
   }
 }
 
-export async function executeStep({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt }, onChunk) {
+export async function executeStep({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/agent/execute-step`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt }),
+    body: JSON.stringify({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
