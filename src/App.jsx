@@ -56,6 +56,7 @@ import UsageDropdown from './components/UsageDropdown'
 import ThinkingSwitcher from './components/ThinkingSwitcher'
 import BehaviorSwitcher from './components/BehaviorSwitcher'
 import { startCheckout, redirectToCheckout } from './lib/paystack'
+import GitHubModal from './components/GitHubModal'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
@@ -189,6 +190,48 @@ function AppInner() {
     setShowSettings(true)
   }
 
+  const handleGitHubPush = () => {
+    if (!user) {
+      setShowLogin(true)
+      return
+    }
+    setGithubModal('push')
+  }
+
+  const handleGitHubPull = () => {
+    if (!user) {
+      setShowLogin(true)
+      return
+    }
+    setGithubModal('pull')
+  }
+
+  const handlePulledRepo = (result) => {
+    // Create a new session with the pulled files
+    const newSession = {
+      id: Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4),
+      title: result.repo,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      messages: [
+        {
+          role: 'assistant',
+          text: `Imported ${result.fileCount} file${result.fileCount === 1 ? '' : 's'} from ${result.owner}/${result.repo} (${result.branch}).`,
+          time: Date.now(),
+        },
+      ],
+      files: result.files,
+      openTabs: Object.keys(result.files).slice(0, 3),
+      activeFile: Object.keys(result.files)[0] || '',
+      history: [],
+    }
+    setSessionStore((s) => ({
+      sessions: [...s.sessions, newSession],
+      activeSessionId: newSession.id,
+    }))
+    showToast(`Imported ${result.fileCount} file(s) from GitHub`, 'ok')
+  }
+
   // ---- Session CRUD ----
   const handleNewSession = () => {
     setSessionStore((s) => addSession(s, 'New session'))
@@ -227,6 +270,7 @@ const [testAfterApply, setTestAfterApply] = useState(false)
 const [testProgress, setTestProgress] = useState(null) // null | { step, message } | { done: true }
 const isMobile = useMobile(768)
 const [showLogin, setShowLogin] = useState(false)
+    const [githubModal, setGithubModal] = useState(null) // null | 'push' | 'pull'
   // ---- Cloud sync: on sign-in, load remote sessions (merge guest once) ----
   // ---- Cloud sync: on sign-in, load remote sessions ----
   // IMPORTANT: keyed on user.id so it ONLY runs when the user changes,
@@ -1551,6 +1595,21 @@ case 'importZip': setShowImport(true); break
         {history.length > 0 && (
           <div className="status-item">History: {history.length}</div>
         )}
+        <div className="status-spacer" />
+        <button
+          className="status-btn"
+          onClick={handleGitHubPush}
+          title="Push project to GitHub"
+        >
+          ↗ Push
+        </button>
+        <button
+          className="status-btn"
+          onClick={handleGitHubPull}
+          title="Import from GitHub"
+        >
+          ↙ Import
+        </button>
       </div>
 
       {pendingDiff && (
@@ -1619,6 +1678,16 @@ case 'importZip': setShowImport(true); break
 
       {showLogin && (
         <LoginModal onClose={() => setShowLogin(false)} />
+      )}
+
+      {githubModal && (
+        <GitHubModal
+          mode={githubModal}
+          files={files}
+          sessionTitle={activeSession.title}
+          onClose={() => setGithubModal(null)}
+          onPulled={handlePulledRepo}
+        />
       )}
     </div>
   )

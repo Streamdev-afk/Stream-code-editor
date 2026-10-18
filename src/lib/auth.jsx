@@ -46,6 +46,7 @@ export function AuthProvider({ children }) {
       provider: 'github',
       options: {
         redirectTo: window.location.origin,
+        scopes: 'repo read:user user:email',
       },
     })
   }

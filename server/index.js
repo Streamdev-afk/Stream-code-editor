@@ -19,6 +19,7 @@ import {
   cancelSubscription,
   isConfigured as subsConfigured,
 } from './subscriptions.js'
+import createGithubRouter from './githubRoutes.js'
 
 const app = express()
 
@@ -108,6 +109,21 @@ async function callGroqWithRetry(params, maxAttempts = 3) {
 
 const esbuildReady = true
 console.log('✅ esbuild ready')
+// GitHub router needs supabaseAdmin for token storage
+import { createClient } from '@supabase/supabase-js'
+const SUPABASE_URL = process.env.SUPABASE_URL
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+const supabaseAdmin = (SUPABASE_URL && SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    })
+  : null
+
+if (supabaseAdmin) {
+  app.use('/api/github', createGithubRouter({ supabaseAdmin }))
+} else {
+  console.warn('⚠️  GitHub routes disabled — missing service role key')
+}
 
 // ============================================================
 // STATE

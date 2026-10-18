@@ -1,5 +1,6 @@
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
+import GitHubSettings from './GitHubSettings'
 
 function Row({ label, hint, children }) {
   return (
@@ -48,6 +49,13 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade }
             <div className="settings-section-title">Billing</div>
             <div className="settings-billing-wrap">
               <BillingPanel onUpgrade={onUpgrade} />
+            </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">GitHub</div>
+            <div className="settings-billing-wrap">
+              <GitHubSettings />
             </div>
           </div>
 
