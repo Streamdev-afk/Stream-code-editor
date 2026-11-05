@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="ION Qoders">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#10b981"/><stop offset="0.55" stop-color="#22d3ee"/><stop offset="1" stop-color="#6366f1"/>
+    </linearGradient>
+    <mask id="hole"><rect width="512" height="512" fill="#fff"/><circle cx="244" cy="240" r="94" fill="#000"/></mask>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#g)"/>
+  <circle cx="244" cy="240" r="116" fill="none" stroke="#fff" stroke-width="44"/>
+  <line x1="316" y1="312" x2="362" y2="358" stroke="#fff" stroke-width="44" stroke-linecap="round" mask="url(#hole)"/>
+  <path d="M206 204 L244 240 L206 276" fill="none" stroke="#0a0b0f" stroke-opacity=".85" stroke-width="22" stroke-linecap="round" stroke-linejoin="round"/>
+  <line x1="260" y1="276" x2="290" y2="276" stroke="#0a0b0f" stroke-opacity=".85" stroke-width="22" stroke-linecap="round"/>
+</svg>
