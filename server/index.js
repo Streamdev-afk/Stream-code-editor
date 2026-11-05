@@ -41,7 +41,7 @@ app.use(cors({
 
 app.use((req, res, next) => {
   if (req.path === '/api/paystack/webhook') return next()
-  return express.json()(req, res, next)
+  return express.json({ limit: '5mb' })(req, res, next)
 })
 
 app.use(attachUser)
@@ -784,6 +784,11 @@ app.post('/api/preview/session', (req, res) => {
   if (!files || typeof files !== 'object') return res.status(400).json({ error: 'files required' })
   let id = sessionId
   if (!id || !previewSessions.has(id)) id = crypto.randomBytes(8).toString('hex')
+  // keep memory bounded: drop the oldest previews once there are too many
+  if (previewSessions.size >= 500 && !previewSessions.has(id)) {
+    const oldest = previewSessions.keys().next().value
+    previewSessions.delete(oldest)
+  }
   previewSessions.set(id, { files, activeFile, updatedAt: Date.now() })
   res.json({ sessionId: id, url: `/preview/${id}` })
 })

@@ -10,6 +10,7 @@ import Preview from './components/Preview'
 import LanguageSelect from './components/LanguageSelect'
 import { streamEdit } from './lib/ai'
 import './App.css'
+import './modern.css'
 import InputModal from './components/InputModal'
 import {
   loadFiles, saveFiles, resetFiles, getLanguageFromPath, DEFAULT_FILES,

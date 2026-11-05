@@ -113,5 +113,6 @@ export async function verifyWebhookSignature(rawBody, signature) {
     .update(rawBody)
     .digest('hex')
 
-  return hash === signature
+  if (typeof signature !== 'string' || signature.length !== hash.length) return false
+  return crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(signature))
 }

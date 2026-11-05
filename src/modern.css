@@ -1,0 +1,400 @@
+/* ==========================================================================
+   STREAM modern UI layer. Loads AFTER App.css, so it wins on equal specificity.
+   Idea: floating rounded panels on a dark canvas with a soft accent glow,
+   pill buttons, glass menus, calm borders. Works on phone and PC.
+   ========================================================================== */
+
+:root {
+  --bg-app: #08090d;
+  --bg-panel: #11131a;
+  --bg-elevated: #171a23;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-active: rgba(255, 255, 255, 0.09);
+  --bg-input: #0d0f15;
+
+  --border-soft: rgba(255, 255, 255, 0.05);
+  --border: rgba(255, 255, 255, 0.08);
+  --border-strong: rgba(255, 255, 255, 0.16);
+
+  --text-primary: #eceef4;
+  --text-secondary: #c5c9d6;
+  --text-muted: #8d93a5;
+  --text-dim: #636a7d;
+
+  --radius-sm: 7px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+
+  --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.35);
+  --shadow-pop: 0 24px 70px rgba(0, 0, 0, 0.6);
+  --ring: 0 0 0 3px var(--accent-dim);
+  --glass: rgba(20, 22, 31, 0.78);
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+html,
+body,
+#root {
+  background: var(--bg-app);
+  font-family: var(--font-ui);
+  letter-spacing: -0.005em;
+}
+
+/* soft ambient glow behind everything */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(900px 520px at 8% -12%, var(--accent-dim), transparent 62%),
+    radial-gradient(760px 520px at 104% 112%, rgba(99, 102, 241, 0.12), transparent 62%);
+}
+
+.app {
+  position: relative;
+  z-index: 1;
+  background: transparent;
+}
+
+/* ---------- slim scrollbars ---------- */
+::-webkit-scrollbar { width: 12px; height: 12px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.12);
+  border: 3px solid transparent;
+  background-clip: padding-box;
+  border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.22); background-clip: padding-box; border: 3px solid transparent; }
+
+/* ---------- top bar ---------- */
+.topbar {
+  height: 54px;
+  background: transparent;
+  border-bottom: none;
+  padding: 0 14px;
+  gap: 10px;
+}
+
+.logo { font-weight: 800; font-size: 14.5px; letter-spacing: 0.4px; gap: 10px; }
+
+.logo-dot {
+  position: relative;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--accent), var(--logo-end, #22d3ee));
+  box-shadow: 0 6px 18px var(--accent-glow);
+  animation: none;
+}
+.logo-dot::after {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+}
+
+.topbar-btn {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  padding: 7px 14px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  transition: background 0.18s var(--ease), border-color 0.18s var(--ease), transform 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.topbar-btn:hover:not(:disabled) { background: var(--bg-active); border-color: var(--border-strong); transform: translateY(-1px); }
+.topbar-btn:active:not(:disabled) { transform: translateY(0) scale(0.98); }
+.topbar-btn.primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  border-color: transparent;
+  color: #03140d;
+  box-shadow: 0 6px 20px var(--accent-glow);
+}
+.topbar-btn.primary:hover:not(:disabled) { box-shadow: 0 10px 26px var(--accent-glow); }
+.topbar-btn.icon { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
+
+.view-toggle {
+  background: var(--bg-hover);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px;
+  gap: 2px;
+}
+.view-btn { border-radius: 999px; border: none; padding: 5px 14px; font-weight: 600; transition: all 0.18s var(--ease); }
+.view-btn.active { background: var(--bg-active); color: var(--text-primary); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06) inset; }
+
+/* ---------- floating panels ---------- */
+.main { padding: 0 10px 6px; gap: 10px; min-height: 0; }
+
+.main > .sidebar-wrap,
+.main > .editor-pane,
+.main > .aichat {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+
+.main > .editor-pane { background: #0e1016; }
+.main > .sidebar-wrap { width: 252px; }
+.main > .aichat { width: 390px; border-left: 1px solid var(--border); }
+
+/* sidebar tabs become a small segmented control */
+.sidebar-tabs {
+  height: auto;
+  padding: 8px;
+  gap: 4px;
+  background: transparent;
+  border: none;
+}
+.sidebar-tab {
+  flex: 1;
+  padding: 7px 0;
+  border: none;
+  border-radius: 10px;
+  font-size: 13px;
+  transition: background 0.18s var(--ease), color 0.18s var(--ease);
+}
+.sidebar-tab:hover { background: var(--bg-hover); }
+.sidebar-tab.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+  border-bottom: none;
+  box-shadow: none;
+}
+
+.filetree,
+.sidebar-wrap .filetree { background: transparent; border-right: none; }
+
+.panel-header {
+  border-bottom: none;
+  padding: 8px 14px 6px;
+  font-size: 10.5px;
+  letter-spacing: 0.9px;
+  color: var(--text-dim);
+}
+
+.tree-row {
+  margin: 1px 8px;
+  padding: 6px 10px;
+  border-radius: 9px;
+  transition: background 0.14s var(--ease);
+}
+.tree-row:hover { background: var(--bg-hover); }
+.tree-row.active { background: var(--accent-dim); color: var(--text-primary); }
+
+/* ---------- editor tabs ---------- */
+.tabs-bar {
+  height: 46px;
+  padding: 7px 8px;
+  gap: 4px;
+  align-items: center;
+  background: transparent;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  height: 32px;
+  min-width: 104px;
+  padding: 0 8px 0 11px;
+  border: none;
+  border-radius: 10px;
+  font-weight: 500;
+  transition: background 0.16s var(--ease), color 0.16s var(--ease);
+}
+.tab:hover { background: var(--bg-hover); }
+.tab.active { background: var(--bg-active); color: var(--text-primary); }
+.tab.active::before { display: none; }
+.tab.active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -8px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-glow);
+}
+.tab-close { border-radius: 6px; }
+.tab-close:hover { background: var(--bg-active); }
+
+/* ---------- bottom panel + status bar ---------- */
+.bottom-panel { background: var(--bg-panel); border-top: 1px solid var(--border); }
+.bottom-tabs { padding: 4px 8px; gap: 4px; background: transparent; }
+.bottom-tab { border-radius: 8px; }
+
+.statusbar {
+  height: 30px;
+  background: transparent;
+  border-top: none;
+  padding: 0 16px;
+  gap: 8px;
+  color: var(--text-dim);
+}
+.status-btn, .status-item { border-radius: 8px; padding: 3px 8px; transition: background 0.14s var(--ease); }
+.status-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ---------- AI chat ---------- */
+.aichat-header { padding: 10px 12px !important; border-bottom: 1px solid var(--border); }
+.chat-messages { padding: 14px 14px 6px; gap: 14px; }
+.chat-msg { border-radius: 14px; }
+.chat-avatar { border-radius: 10px; }
+.chat-text { line-height: 1.6; font-size: 13.5px; }
+.chat-composer { padding: 10px 12px 12px; background: transparent; border-top: none; }
+.chat-input-wrap {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  padding: 8px 10px;
+  transition: border-color 0.18s var(--ease), box-shadow 0.18s var(--ease);
+}
+.chat-input-wrap:focus-within { border-color: var(--accent); box-shadow: var(--ring); }
+.chat-input { background: transparent; border: none; outline: none; box-shadow: none; }
+.chat-send {
+  border-radius: 12px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-hover));
+  color: #03140d;
+  box-shadow: 0 6px 16px var(--accent-glow);
+  transition: transform 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+.chat-send:hover:not(:disabled) { transform: translateY(-1px); }
+.chat-send:active:not(:disabled) { transform: scale(0.95); }
+
+.model-btn, .thinking-btn, .behavior-btn, .usage-btn, .usage-pill, .mode-switch, .lang-select {
+  border-radius: 999px;
+  border-color: var(--border);
+  background: var(--bg-hover);
+  transition: background 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.model-btn:hover, .thinking-btn:hover, .behavior-btn:hover, .usage-btn:hover { background: var(--bg-active); border-color: var(--border-strong); }
+.mode-btn { border-radius: 999px; }
+
+/* ---------- menus and popovers: glass ---------- */
+.model-menu, .thinking-menu, .behavior-menu, .user-menu-dropdown, .ai-menu,
+.usage-menu, .tree-context-menu, .cmd-palette, .usage-dropdown {
+  background: var(--glass);
+  backdrop-filter: blur(18px) saturate(140%);
+  -webkit-backdrop-filter: blur(18px) saturate(140%);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-pop);
+  animation: ms-pop 0.16s var(--ease);
+}
+.model-item, .thinking-item, .behavior-item, .user-menu-item, .ai-menu-item, .menu-item, .cmd-item {
+  border-radius: 10px;
+  transition: background 0.12s var(--ease);
+}
+
+/* ---------- modals ---------- */
+.modal-backdrop, .cmd-backdrop {
+  background: rgba(5, 6, 10, 0.62);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  animation: ms-fade 0.18s ease;
+}
+.modal, .settings-modal, .planning-modal, .gh-modal, .login-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  box-shadow: var(--shadow-pop);
+  animation: ms-pop 0.22s var(--ease);
+}
+.modal-header { border-bottom: 1px solid var(--border); }
+.modal-footer { border-top: 1px solid var(--border); }
+.modal-close { border-radius: 10px; }
+.modal-close:hover { background: var(--bg-hover); }
+
+/* ---------- inputs and buttons ---------- */
+.modal-input, .gh-input, .search-input, .cmd-input, .session-rename-input, .tree-rename-input, .settings-number {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  transition: border-color 0.16s var(--ease), box-shadow 0.16s var(--ease);
+}
+.modal-input:focus, .gh-input:focus, .search-input:focus, .cmd-input:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+
+.gh-btn, .btn-accept, .btn-check, .btn-ghost, .seg-btn, .login-provider-btn, .sessions-new-btn, .upgrade-btn, .usage-manage-btn {
+  border-radius: 11px;
+  transition: background 0.16s var(--ease), transform 0.16s var(--ease), box-shadow 0.16s var(--ease), border-color 0.16s var(--ease);
+}
+.gh-btn-primary, .btn-accept { background: linear-gradient(135deg, var(--accent), var(--accent-hover)); color: #03140d; border-color: transparent; }
+.gh-btn:hover, .btn-accept:hover, .login-provider-btn:hover, .upgrade-btn:hover { transform: translateY(-1px); }
+
+.toggle { border-radius: 999px; }
+.toggle-knob { border-radius: 50%; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4); }
+.settings-section { border-radius: var(--radius-lg); }
+
+/* cards inside modals and panels */
+.planning-step, .agent-file, .gh-repo-item, .session-row, .history-item, .billing-upgrade-card, .import-option, .usage-menu-cta {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--bg-elevated);
+  transition: border-color 0.16s var(--ease), transform 0.16s var(--ease), background 0.16s var(--ease);
+}
+.gh-repo-item:hover, .session-row:hover, .history-item:hover, .import-option:hover, .billing-upgrade-card:hover {
+  border-color: var(--border-strong);
+  transform: translateY(-1px);
+}
+
+/* preview and terminal */
+.preview-toolbar { background: transparent; border-bottom: 1px solid var(--border); padding: 6px 10px; }
+.preview-url-bar { border-radius: 999px; background: var(--bg-input); border: 1px solid var(--border); }
+.preview-frame { background: #fff; border-radius: 0 0 var(--radius-xl) var(--radius-xl); }
+.terminal { background: #0b0d12; }
+
+/* empty states */
+.empty-editor { color: var(--text-muted); }
+
+/* ---------- keyframes (use the independent `scale` property so centered modals do not jump) ---------- */
+@keyframes ms-pop { from { opacity: 0; scale: 0.96; } to { opacity: 1; scale: 1; } }
+@keyframes ms-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ms-rise { from { opacity: 0; translate: 0 8px; } to { opacity: 1; translate: 0 0; } }
+
+.chat-msg, .tree-row { animation: ms-rise 0.22s var(--ease) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+/* ---------- tablets and small laptops ---------- */
+@media (max-width: 1100px) {
+  .main > .aichat { width: 330px; }
+  .main > .sidebar-wrap { width: 220px; }
+}
+
+/* ---------- phones: full-bleed panels and a floating bottom nav ---------- */
+@media (max-width: 768px) {
+  body::before { opacity: 0.7; }
+  .topbar { height: 50px; padding: 0 10px; }
+  .main { padding: 0; gap: 0; }
+  .main > .sidebar-wrap, .main > .editor-pane, .main > .aichat { border-radius: 0; border-left: none; border-right: none; box-shadow: none; }
+
+  .mobile-main { padding: 0 8px; }
+  .mobile-panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: 20px; }
+  .mobile-panel > .filetree, .mobile-panel > .aichat, .mobile-panel > .preview-wrap { border-radius: 20px; }
+
+  .mobile-tabs {
+    height: 60px;
+    margin: 8px 12px calc(10px + env(safe-area-inset-bottom, 0px));
+    padding: 6px;
+    gap: 4px;
+    background: var(--glass);
+    backdrop-filter: blur(18px);
+    -webkit-backdrop-filter: blur(18px);
+    border: 1px solid var(--border);
+    border-radius: 22px;
+    box-shadow: var(--shadow-pop);
+  }
+  .mobile-tab { border-radius: 16px; }
+  .mobile-tab.active { background: var(--accent-dim); color: var(--accent-hover); }
+  .mobile-tab-icon { font-size: 19px; }
+
+  .modal, .settings-modal, .planning-modal, .gh-modal, .login-modal { border-radius: 22px; max-height: 92vh; }
+  .chat-input-wrap { border-radius: 20px; }
+}

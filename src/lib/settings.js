@@ -46,10 +46,10 @@ export const THEMES = {
   },
   blue: {
     label: 'Blue',
-    accent: '#58a6ff',
-    accentHover: '#79b8ff',
-    accentDim: '#58a6ff33',
-    accentGlow: '#58a6ff66',
+    accent: '#8ab4ff',
+    accentHover: '#9bbcff',
+    accentDim: '#8ab4ff33',
+    accentGlow: '#8ab4ff66',
     logoEnd: '#a371f7',
   },
   purple: {
