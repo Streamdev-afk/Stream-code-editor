@@ -3,13 +3,21 @@
  *  - Short window: 5 hours
  *  - Long window: 2 weeks
  * Both must have room for a request to succeed.
- * Resets on server restart — swap for DB later.
+ * Stored in Supabase (table stream_usage) so limits survive server restarts and sleeps.
+ * If the database is unreachable it falls back to memory, so the app never goes down because of it.
  */
 
 // key -> { shortWindowStart, shortCount, longWindowStart, longCount, tokens }
 const usage = new Map()
 
+import { createClient } from '@supabase/supabase-js'
 import { getUserTier as getUserTierFromDB } from './subscriptions.js'
+
+const SB_URL = process.env.SUPABASE_URL
+const SB_SECRET = process.env.SUPABASE_SERVICE_ROLE_KEY
+const db = SB_URL && SB_SECRET
+  ? createClient(SB_URL, SB_SECRET, { auth: { persistSession: false, autoRefreshToken: false } })
+  : null
 
 export const SHORT_WINDOW_MS = 5 * 60 * 60 * 1000          // 5 hours
 export const LONG_WINDOW_MS = 14 * 24 * 60 * 60 * 1000     // 2 weeks
@@ -121,6 +129,43 @@ function getOrCreateEntry(key) {
   return entry
 }
 
+function fromRow(r) {
+  return {
+    shortWindowStart: Date.parse(r.short_start),
+    shortCount: Number(r.short_count),
+    longWindowStart: Date.parse(r.long_start),
+    longCount: Number(r.long_count),
+    tokens: Number(r.tokens),
+  }
+}
+
+let lastDbWarn = 0
+function warnDb(msg) {
+  if (Date.now() - lastDbWarn > 60 * 1000) {
+    lastDbWarn = Date.now()
+    console.warn('[usage] database unavailable, using memory:', msg)
+  }
+}
+
+// Current numbers for a key: Supabase first (rolls expired windows there), memory as a backup
+async function getEntry(key) {
+  if (db) {
+    try {
+      const { data, error } = await db.rpc('stream_usage_touch', {
+        p_key: key,
+        p_short_ms: SHORT_WINDOW_MS,
+        p_long_ms: LONG_WINDOW_MS,
+      })
+      const row = Array.isArray(data) ? data[0] : data
+      if (!error && row) return fromRow(row)
+      if (error) warnDb(error.message)
+    } catch (e) {
+      warnDb(e?.message || String(e))
+    }
+  }
+  return getOrCreateEntry(key)
+}
+
 // ------------------------------------------------------------
 // Public API
 // ------------------------------------------------------------
@@ -133,7 +178,7 @@ export async function checkLimit(req, cost = 1) {
   const key = getUserKey(req)
   const tier = await resolveTier(req)
   const limits = TIER_LIMITS[tier]
-  const entry = getOrCreateEntry(key)
+  const entry = await getEntry(key)
 
   const shortRemaining = limits.short - entry.shortCount
   const longRemaining = limits.long - entry.longCount
@@ -208,10 +253,23 @@ export async function checkLimit(req, cost = 1) {
  */
 export function recordUsage(req, cost = 1, { tokens = 0 } = {}) {
   const key = getUserKey(req)
+  // memory copy (backup if the database is down)
   const entry = getOrCreateEntry(key)
   entry.shortCount += cost
   entry.longCount += cost
   entry.tokens += tokens
+  // database copy (this is the one that survives restarts); fire and forget
+  if (db) {
+    db.rpc('stream_usage_add', {
+      p_key: key,
+      p_cost: cost,
+      p_tokens: Math.round(tokens) || 0,
+      p_short_ms: SHORT_WINDOW_MS,
+      p_long_ms: LONG_WINDOW_MS,
+    }).then(({ error }) => {
+      if (error) warnDb(error.message)
+    }).catch((e) => warnDb(e?.message || String(e)))
+  }
 }
 
 /**
@@ -221,7 +279,7 @@ export async function getUsage(req) {
   const key = getUserKey(req)
   const tier = await resolveTier(req)
   const limits = TIER_LIMITS[tier]
-  const entry = getOrCreateEntry(key)
+  const entry = await getEntry(key)
 
   const shortPercent = limits.short > 0
     ? Math.min(100, Math.round((entry.shortCount / limits.short) * 100))

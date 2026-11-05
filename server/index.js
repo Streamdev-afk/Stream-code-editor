@@ -23,18 +23,23 @@ import createGithubRouter from './githubRoutes.js'
 
 const app = express()
 
+// Only your own sites may call this API from a browser.
+// Add more (custom domain, preview links) in the ALLOWED_ORIGINS env var, separated by commas.
+const clean = (u) => String(u || '').trim().replace(/\/+$/, '')
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:4173',
+  'https://stream-code-editor-tau.vercel.app',
   process.env.FRONTEND_URL,
-].filter(Boolean)
+  ...String(process.env.ALLOWED_ORIGINS || '').split(','),
+].map(clean).filter(Boolean)
 
 app.use(cors({
   origin: (origin, callback) => {
+    // no Origin header = server to server (Paystack webhook, health checks): allowed
     if (!origin) return callback(null, true)
-    if (origin.endsWith('.vercel.app')) return callback(null, true)
-    if (ALLOWED_ORIGINS.includes(origin)) return callback(null, true)
-    return callback(null, true)
+    if (ALLOWED_ORIGINS.includes(clean(origin))) return callback(null, true)
+    return callback(null, false)
   },
   credentials: true,
 }))

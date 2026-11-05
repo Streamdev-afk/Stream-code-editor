@@ -81,20 +81,12 @@ body::before {
 .logo { font-weight: 800; font-size: 14.5px; letter-spacing: 0.4px; gap: 10px; }
 
 .logo-dot {
-  position: relative;
-  width: 24px;
-  height: 24px;
+  width: 26px;
+  height: 26px;
   border-radius: 8px;
-  background: linear-gradient(135deg, var(--accent), var(--logo-end, #22d3ee));
+  background: url('/logo-mark.svg') center / contain no-repeat;
   box-shadow: 0 6px 18px var(--accent-glow);
   animation: none;
-}
-.logo-dot::after {
-  content: '';
-  position: absolute;
-  inset: 8px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.92);
 }
 
 .topbar-btn {
