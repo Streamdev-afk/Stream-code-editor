@@ -30,7 +30,7 @@ export default function DiffModal({ original, next, onAccept, onReject, label })
           <div className="modal-title-group">
             <span className="modal-icon">◆</span>
             <div>
-              <div className="modal-title">Stream suggestion</div>
+              <div className="modal-title">ION Qoders suggestion</div>
               <div className="modal-subtitle">{label || 'Edit'}</div>
             </div>
           </div>

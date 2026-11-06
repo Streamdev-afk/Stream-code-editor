@@ -81,7 +81,7 @@ export default function GitHubSettings() {
         Paste a GitHub Personal Access Token to enable pushing your projects to GitHub.
         <br />
         <a
-          href="https://github.com/settings/tokens/new?scopes=repo&description=Stream%20Editor"
+          href="https://github.com/settings/tokens/new?scopes=repo&description=ION%20Qoders"
           target="_blank"
           rel="noreferrer"
           className="gh-link"

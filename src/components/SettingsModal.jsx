@@ -147,7 +147,7 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade }
           <div className="settings-section">
             <div className="settings-section-title">About</div>
             <div className="settings-about">
-              <div className="settings-about-name">Stream</div>
+              <div className="settings-about-name">ION Qoders</div>
               <div className="settings-about-desc">
                 An AI code editor. Built from scratch.
               </div>

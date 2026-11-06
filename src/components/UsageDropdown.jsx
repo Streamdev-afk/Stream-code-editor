@@ -214,7 +214,7 @@ export default function UsageDropdown({ onUpgrade, onManage }) {
                 💎 You're on <strong>{usage.tierLabel}</strong>
               </div>
               <div className="usage-cta-hint">
-                Thanks for supporting Stream
+                Thanks for supporting ION Qoders
               </div>
             </div>
           )}

@@ -10,6 +10,7 @@
 // key -> { shortWindowStart, shortCount, longWindowStart, longCount, tokens }
 const usage = new Map()
 
+import { randomBytes } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
 import { getUserTier as getUserTierFromDB } from './subscriptions.js'
 
@@ -312,4 +313,33 @@ export async function getUsage(req) {
 
     tokens: entry.tokens,
   }
+}
+
+// ------------------------------------------------------------
+// "Turns": when the AI reads your project with terminal commands it needs several quick
+// round trips for ONE question. The first round is charged; the follow-ups ride on a
+// turn id the server handed out, so a single question costs a single request.
+// ------------------------------------------------------------
+const turns = new Map()
+const TURN_TTL_MS = 10 * 60 * 1000
+const MAX_FOLLOWUPS = 6
+
+export function issueTurn(req) {
+  if (turns.size > 500) {
+    const now = Date.now()
+    for (const [id, t] of turns) if (t.expires < now) turns.delete(id)
+  }
+  const id = randomBytes(8).toString('hex')
+  turns.set(id, { key: getUserKey(req), used: 0, expires: Date.now() + TURN_TTL_MS })
+  return id
+}
+
+export function useTurn(req, id) {
+  const t = turns.get(String(id || ''))
+  if (!t) return false
+  if (t.expires < Date.now()) { turns.delete(String(id)); return false }
+  if (t.key !== getUserKey(req)) return false
+  if (t.used >= MAX_FOLLOWUPS) return false
+  t.used++
+  return true
 }

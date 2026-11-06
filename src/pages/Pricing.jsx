@@ -7,7 +7,7 @@ export default function Pricing() {
       <nav className="landing-nav">
         <Link to="/" className="landing-nav-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </Link>
         <div className="landing-nav-links">
           <Link to="/features" className="landing-nav-link">Features</Link>
@@ -95,17 +95,17 @@ export default function Pricing() {
           Free forever plan. No card required.
         </p>
         <Link to="/editor" className="landing-btn landing-btn-primary landing-btn-large">
-          Open Stream →
+          Open ION Qoders →
         </Link>
       </section>
 
       <footer className="landing-footer">
         <div className="landing-footer-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </div>
         <div className="landing-footer-copy">
-          © {new Date().getFullYear()} Stream. Built with Stream.
+          © {new Date().getFullYear()} ION Qoders. Built with ION Qoders.
         </div>
       </footer>
     </div>

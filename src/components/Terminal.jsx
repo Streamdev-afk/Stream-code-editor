@@ -3,7 +3,7 @@ import { createShell, runCommand, autocomplete } from '../lib/shell'
 
 export default function Terminal({ files, onFilesChange }) {
   const [lines, setLines] = useState([
-    { type: 'info', text: 'Stream Shell v1.0 — type "help" for commands.' },
+    { type: 'info', text: 'ION Qoders Shell v1.1 — type "help" for commands.' },
     { type: 'info', text: 'Virtual shell: runs against your project files, not your computer.' },
     { type: 'info', text: '' },
   ])
@@ -26,7 +26,7 @@ export default function Terminal({ files, onFilesChange }) {
   const prompt = () => {
     return (
       <span className="term-prompt">
-        <span className="term-user">stream</span>
+        <span className="term-user">qoders</span>
         <span className="term-sep">:</span>
         <span className="term-path">{shell.cwd}</span>
         <span className="term-sigil">$</span>
@@ -110,7 +110,7 @@ export default function Terminal({ files, onFilesChange }) {
             return (
               <div key={i} className="term-line term-line-input">
                 <span className="term-prompt">
-                  <span className="term-user">stream</span>
+                  <span className="term-user">qoders</span>
                   <span className="term-sep">:</span>
                   <span className="term-path">{line.cwd}</span>
                   <span className="term-sigil">$</span>

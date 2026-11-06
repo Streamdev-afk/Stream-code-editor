@@ -6,7 +6,7 @@ import '../lib/monacoWorkers.js'
 loader.config({ monaco })
 
 
-const DEFAULT_CODE = `// Welcome to Stream
+const DEFAULT_CODE = `// Welcome to ION Qoders
 // Try clicking "Complete Code" in the topbar.
 // Or select some code and right-click for AI actions.
 

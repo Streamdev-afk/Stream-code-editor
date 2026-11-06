@@ -42,7 +42,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
 <html>
   <head><title>App</title></head>
   <body>
-    <div id="root">STREAM</div>
+    <div id="root">ION Qoders</div>
   </body>
 </html>
 `,
@@ -51,7 +51,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
   'README.md': {
     content: `# My Project
 
-Built with STREAM editor.
+Built with ION Qoders.
 `,
     language: 'markdown',
   },

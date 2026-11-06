@@ -76,7 +76,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
 <html>
   <head><title>App</title></head>
   <body>
-    <div id="root">STREAM</div>
+    <div id="root">ION Qoders</div>
   </body>
 </html>
 `,
@@ -85,7 +85,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App />)
   'README.md': {
     content: `# My Project
 
-Built with STREAM editor.
+Built with ION Qoders.
 `,
     language: 'markdown',
   },
@@ -101,7 +101,7 @@ export function createEmptySession(title = 'New session') {
     messages: [
       {
         role: 'assistant',
-        text: "Hey! I'm Stream. Ask me anything, or switch to Agent mode to make changes to your files.",
+        text: "Hey! I'm Qoders. Ask me anything, or switch to Agent mode to make changes to your files.",
         time: now,
       },
     ],
@@ -154,7 +154,7 @@ function migrateSession(s) {
   if (messages.length === 0) {
     messages = [{
       role: 'assistant',
-      text: "Hey! I'm Stream. Ask me anything, or switch to Agent mode to make changes to your files.",
+      text: "Hey! I'm Qoders. Ask me anything, or switch to Agent mode to make changes to your files.",
       time: now,
     }]
   }

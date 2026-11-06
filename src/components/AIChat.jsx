@@ -2,6 +2,24 @@ import { useState, useRef, useEffect } from 'react'
 import { streamAgent, planTask } from '../lib/ai'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
+import { fileToDataUrl } from '../lib/image'
+import { createShell } from '../lib/shell'
+import { shouldExplore, buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS } from '../lib/ai'
+import ModelSwitcher from './ModelSwitcher'
+import ThinkingSwitcher from './ThinkingSwitcher'
+import BehaviorSwitcher from './BehaviorSwitcher'
+
+// The chat AI asks to read code by replying with a <shell>...</shell> block
+const looksLikeShell = (text) => {
+  const t = text.trimStart().toLowerCase()
+  return t.startsWith('<shell') || (t.length > 0 && '<shell>'.startsWith(t))
+}
+
+const parseShellRequest = (text) => {
+  const m = text.trim().match(/^<shell>([\s\S]*?)(?:<\/shell>|$)/i)
+  if (!m) return []
+  return m[1].split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4)
+}
 
 export default function AIChat({
   code,
@@ -17,6 +35,9 @@ export default function AIChat({
   model,
   thinking,
   behavior,
+  onModelChange,
+  onThinkingChange,
+  onBehaviorChange,
   testAfterApply,
   onTestToggle,
   planningMode = true,
@@ -31,13 +52,18 @@ export default function AIChat({
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
+  const [images, setImages] = useState([]) // data URLs waiting to be sent (max 2)
+  const [dragOver, setDragOver] = useState(false)
+  const [confirmDelete, setConfirmDelete] = useState(null)
+  const [imageError, setImageError] = useState('')
+  const fileInputRef = useRef(null)
 
   // If parent supplies messages (session-backed), use those.
   // Otherwise fall back to internal state (backward compat).
   const [localMessages, setLocalMessages] = useState(() => [
     {
       role: 'assistant',
-      text: "Hey! I'm Stream. Ask me anything, or switch to Agent mode to make changes to your files.",
+      text: "Hey! I'm Qoders. Ask me anything, or switch to Agent mode to make changes to your files.",
       time: Date.now(),
     },
   ])
@@ -51,6 +77,21 @@ export default function AIChat({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const addImageFiles = async (fileList) => {
+    const picked = Array.from(fileList || []).filter((f) => f && f.type?.startsWith('image/'))
+    if (!picked.length) return
+    setImageError('')
+    try {
+      const room = Math.max(0, 2 - images.length)
+      if (picked.length > room) setImageError('You can attach up to 2 images.')
+      const urls = []
+      for (const f of picked.slice(0, room)) urls.push(await fileToDataUrl(f))
+      if (urls.length) setImages((prev) => [...prev, ...urls].slice(0, 2))
+    } catch (e) {
+      setImageError(e.message || 'Could not read that image.')
+    }
+  }
 
 useEffect(() => {
   const handler = (e) => {
@@ -66,8 +107,8 @@ useEffect(() => {
   return () => window.removeEventListener('stream-test-result', handler)
 }, [])
 
-  const sendChat = async (text) => {
-    const userMsg = { role: 'user', text, time: Date.now() }
+  const sendChat = async (text, imgs = []) => {
+    const userMsg = { role: 'user', text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) }
 
     // Build the full conversation including the new message
     const newMessages = [...messages, userMsg]
@@ -79,88 +120,124 @@ useEffect(() => {
     ])
     setStreaming(true)
 
+    const setLast = (t) =>
+      setMessages((m) => {
+        const c = [...m]
+        c[c.length - 1] = { role: 'assistant', text: t, time: Date.now() }
+        return c
+      })
+
     try {
       const apiMessages = newMessages
-        .filter((m) => !(m.role === 'assistant' && m.text.startsWith("Hey! I'm Stream")))
+        .filter((m) => !(m.role === 'assistant' && /^Hey! I'm (Stream|Qoders)/.test(m.text)))
         .map((m) => ({ role: m.role, content: m.text }))
 
-      const controller = new AbortController()
-      const timeoutId = setTimeout(() => controller.abort(), 60000)
+      // Bigger projects: the AI is not sent the files. It asks for terminal commands
+      // (grep -rn, sed -n ...) and gets back only the lines it needs.
+      const explore = shouldExplore(files)
+      const shell = explore ? createShell(files, '/') : null
+      const index = explore ? buildIndex(files) : null
+      const observations = []
+      let turn = null
 
-      let res
-      try {
-        res = await apiFetch(`${API_BASE}/api/chat`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ messages: apiMessages, code, language, model, thinking, behavior }),
-          signal: controller.signal,
-        })
-      } finally {
-        clearTimeout(timeoutId)
-      }
-      if (!res.ok) {
-        let errorMsg = `HTTP ${res.status}`
+      for (let round = 0; round <= MAX_SHELL_ROUNDS; round++) {
+        const lastRound = round === MAX_SHELL_ROUNDS
+        const body = explore
+          ? {
+              messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs,
+              explore: true, fileIndex: index, observations, turn, lastRound,
+            }
+          : { messages: apiMessages, code, language, model, thinking, behavior, images: imgs }
+
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 60000)
+        let res
         try {
-          const errorData = await res.json()
-          if (errorData.error) errorMsg = errorData.error
-        } catch {}
-        throw new Error(errorMsg)
-      }
-
-      const reader = res.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        buffer += decoder.decode(value, { stream: true })
-        const lines = buffer.split('\n\n')
-        buffer = lines.pop() || ''
-        for (const line of lines) {
-          if (!line.startsWith('data: ')) continue
-          const data = line.slice(6)
-          if (data === '[DONE]') continue
-          try {
-            const parsed = JSON.parse(data)
-            if (parsed.error) {
-              setMessages((m) => {
-                const c = [...m]
-                c[c.length - 1] = { role: 'assistant', text: `⚠️ ${parsed.error}`, time: Date.now() }
-                return c
-              })
-              continue
-            }
-            if (parsed.text) {
-              setMessages((m) => {
-                const c = [...m]
-                const last = c[c.length - 1]
-                c[c.length - 1] = { ...last, text: last.text + parsed.text }
-                return c
-              })
-            }
-          } catch {}
+          res = await apiFetch(`${API_BASE}/api/chat`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+            signal: controller.signal,
+          })
+        } finally {
+          clearTimeout(timeoutId)
         }
+        if (!res.ok) {
+          let errorMsg = `HTTP ${res.status}`
+          try {
+            const errorData = await res.json()
+            if (errorData.error) errorMsg = errorData.error
+          } catch {}
+          throw new Error(errorMsg)
+        }
+
+        const reader = res.body.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let full = ''
+
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n\n')
+          buffer = lines.pop() || ''
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue
+            const data = line.slice(6)
+            if (data === '[DONE]') continue
+            try {
+              const parsed = JSON.parse(data)
+              if (parsed.error) {
+                setLast(`⚠️ ${parsed.error}`)
+                continue
+              }
+              if (parsed.turn) turn = parsed.turn
+              if (parsed.text) {
+                full += parsed.text
+                // a terminal request is not an answer: show a status instead of the raw command
+                setLast(explore && !lastRound && looksLikeShell(full) ? '🔎 Reading your code…' : full)
+              }
+            } catch {}
+          }
+        }
+
+        if (explore && !lastRound) {
+          const cmds = parseShellRequest(full)
+          if (cmds.length) {
+            for (const c of cmds) {
+              setLast(`🔎 Reading: ${c}`)
+              observations.push({ cmd: c, output: runForAI(shell, c) })
+            }
+            trimObservations(observations)
+            setLast('🔎 Thinking…')
+            continue
+          }
+        }
+        break
       }
     } catch (err) {
       const msg = err.name === 'AbortError'
         ? 'Request timed out after 60s. Try a shorter question.'
         : err.message
-      setMessages((m) => {
-        const c = [...m]
-        c[c.length - 1] = { role: 'assistant', text: `⚠️ ${msg}`, time: Date.now() }
-        return c
-      })
+      setLast(`⚠️ ${msg}`)
     } finally {
       setStreaming(false)
       inputRef.current?.focus()
     }
   }
 
-  const sendAgent = async (text) => {
+  const sendAgent = async (text, imgs = []) => {
+    // shows which terminal command the AI is running to read your code
+    const showReading = (cmd) =>
+      setMessages((m) => {
+        const c = [...m]
+        c[c.length - 1] = { role: 'assistant', text: `🔎 Reading: ${cmd}`, time: Date.now(), _status: true }
+        return c
+      })
     setMessages([
       ...messages,
-      { role: 'user', text, time: Date.now() },
+      { role: 'user', text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) },
       { role: 'assistant', text: 'Analyzing project…', time: Date.now(), _status: true },
     ])
     setStreaming(true)
@@ -169,7 +246,7 @@ useEffect(() => {
       // If planning mode is on, plan first
       if (planningMode && onPlanReady) {
         const planResult = await planTask(
-  { prompt: text, files, activeFile, history: messages, model, thinking, behavior },
+  { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, onStatus: showReading },
           (_chunk, full) => {
             let hint = 'Analyzing project…'
             if (full.length > 200) hint = 'Drafting plan…'
@@ -200,7 +277,7 @@ useEffect(() => {
 
       // Fallback: direct agent (no planning)
       const plan = await streamAgent(
-  { prompt: text, files, activeFile, history: messages, model, thinking, behavior },
+  { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, onStatus: showReading },
   (_chunk, full) => {
           let hint = 'Analyzing project…'
           if (full.length > 200) hint = 'Planning changes…'
@@ -249,10 +326,13 @@ setMessages((m) => {
     }
   }
 
-    const send = () => {
-    if (!input.trim() || streaming) return
-    const text = input.trim()
+  const send = () => {
+    if ((!input.trim() && images.length === 0) || streaming) return
+    const imgs = images
+    const text = input.trim() || 'Look at the attached image.'
     setInput('')
+    setImages([])
+    setImageError('')
 
     // Auto-title on first user message
     const userMsgCount = messages.filter((m) => m.role === 'user').length
@@ -260,15 +340,29 @@ setMessages((m) => {
       onFirstMessage(text)
     }
 
-    if (mode === 'agent') sendAgent(text)
-    else sendChat(text)
+    if (mode === 'agent') sendAgent(text, imgs)
+    else sendChat(text, imgs)
   }
 
   const fmtTime = (t) =>
     new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
   return (
-    <div className="aichat">
+    <div
+      className={`aichat ${dragOver ? 'drag-over' : ''}`}
+      onDragOver={(e) => {
+        if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
+          e.preventDefault()
+          setDragOver(true)
+        }
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        addImageFiles(e.dataTransfer?.files)
+      }}
+    >
             <div className="panel-header aichat-header">
         <div className="aichat-header-row">
           <div className="mode-switch">
@@ -309,7 +403,7 @@ setMessages((m) => {
           </div>
         </div>
         {mode === 'agent' && (
-          <label className="test-toggle" title="After applying changes, let Stream open the preview, watch for errors, and auto-fix them">
+          <label className="test-toggle" title="After applying changes, let Qoders open the preview, watch for errors, and auto-fix them">
             <input
               type="checkbox"
               checked={!!testAfterApply}
@@ -389,7 +483,39 @@ setMessages((m) => {
                         {msgCount} msg · {fileCount} files
                       </div>
                     </div>
-                    {isActive && <div className="aichat-session-active-dot" />}
+                    {confirmDelete === s.id ? (
+                      <div className="aichat-session-confirm" onClick={(e) => e.stopPropagation()}>
+                        <span>Delete?</span>
+                        <button
+                          className="aichat-session-yes"
+                          onClick={() => {
+                            setConfirmDelete(null)
+                            onDeleteSession?.(s.id)
+                          }}
+                        >
+                          Yes
+                        </button>
+                        <button className="aichat-session-no" onClick={() => setConfirmDelete(null)}>
+                          No
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        {isActive && <div className="aichat-session-active-dot" />}
+                        {onDeleteSession && (
+                          <button
+                            className="aichat-session-del"
+                            title="Delete this session"
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setConfirmDelete(s.id)
+                            }}
+                          >
+                            🗑
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                 )
               })
@@ -411,7 +537,7 @@ setMessages((m) => {
               </div>
               <div className="chat-body">
                 <div className="chat-meta">
-                  <span className="chat-author">{isUser ? 'You' : 'Stream'}</span>
+                  <span className="chat-author">{isUser ? 'You' : 'Qoders'}</span>
                   <span className="chat-time">{fmtTime(msg.time || Date.now())}</span>
                 </div>
                 <div className={`chat-text ${msg._status ? 'chat-status' : ''}`}>
@@ -425,6 +551,9 @@ setMessages((m) => {
                     msg.text || (streaming && isLast ? '▍' : '')
                   )}
                 </div>
+                {msg.imageCount > 0 && (
+                  <div className="chat-image-chip">🖼 {msg.imageCount} image{msg.imageCount > 1 ? 's' : ''} attached</div>
+                )}
               </div>
             </div>
           )
@@ -433,14 +562,31 @@ setMessages((m) => {
       </div>
 
       <div className="chat-input-wrap">
+        {images.length > 0 && (
+          <div className="chat-attachments">
+            {images.map((src, i) => (
+              <div className="chat-attach" key={i}>
+                <img src={src} alt="attachment" />
+                <button
+                  className="chat-attach-x"
+                  title="Remove"
+                  onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        {imageError && <div className="chat-image-error">{imageError}</div>}
         <div className={`chat-composer mode-${mode}`}>
           <textarea
             ref={inputRef}
             className="chat-input"
             placeholder={
-              streaming ? 'Stream is working...'
-                : mode === 'agent' ? 'Tell Stream what to build or change...'
-                : 'Ask Stream anything...'
+              streaming ? 'ION Qoders is working...'
+                : mode === 'agent' ? 'Tell Qoders what to build or change...'
+                : 'Ask Qoders anything... (paste or drop a screenshot)'
             }
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -450,21 +596,58 @@ setMessages((m) => {
                 send()
               }
             }}
+            onPaste={(e) => {
+              const files = Array.from(e.clipboardData?.files || []).filter((f) => f.type.startsWith('image/'))
+              if (files.length) {
+                e.preventDefault()
+                addImageFiles(files)
+              }
+            }}
             disabled={streaming}
             rows={2}
           />
-          <button
-            className="chat-send"
-            onClick={send}
-            disabled={streaming || !input.trim()}
-            title={mode === 'agent' ? 'Plan changes' : 'Send'}
-          >
-            {streaming ? '⋯' : mode === 'agent' ? '⚡' : '↑'}
-          </button>
+          <div className="composer-bar">
+            <div className="composer-tools">
+              <button
+                className="composer-icon"
+                title="Attach an image (or paste / drop one)"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={streaming || images.length >= 2}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <rect x="3" y="3" width="18" height="18" rx="4" />
+                  <circle cx="9" cy="9.5" r="1.6" />
+                  <path d="M21 16l-5-5-8 8" />
+                </svg>
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                multiple
+                hidden
+                onChange={(e) => {
+                  addImageFiles(e.target.files)
+                  e.target.value = ''
+                }}
+              />
+              <ModelSwitcher value={model} onChange={onModelChange} disabled={streaming} compact up />
+              <ThinkingSwitcher value={thinking} onChange={onThinkingChange} disabled={streaming} compact up />
+              <BehaviorSwitcher value={behavior} onChange={onBehaviorChange} disabled={streaming} compact up />
+            </div>
+            <button
+              className="chat-send"
+              onClick={send}
+              disabled={streaming || (!input.trim() && images.length === 0)}
+              title={mode === 'agent' ? 'Plan changes' : 'Send'}
+            >
+              {streaming ? '⋯' : mode === 'agent' ? '⚡' : '↑'}
+            </button>
+          </div>
         </div>
         <div className="chat-hint">
           {mode === 'agent'
-            ? 'Agent mode — Stream will propose file changes you can review'
+            ? 'Agent mode — Qoders reads only the lines it needs, then proposes changes you can review'
             : 'Chat mode — ask questions. Switch to Agent to edit files.'}
         </div>
       </div>

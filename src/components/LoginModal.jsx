@@ -1,7 +1,44 @@
+import { useState } from 'react'
 import { useAuth } from '../lib/auth'
 
 export default function LoginModal({ onClose }) {
-  const { signInWithGitHub, signInWithGoogle } = useAuth()
+  const { signInWithGitHub, signInWithGoogle, signInWithEmail, signUpWithEmail } = useAuth()
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const submitEmail = async (e) => {
+    e.preventDefault()
+    if (busy) return
+    setMessage('')
+    if (!email.trim() || password.length < 6) {
+      setMessage('Enter your email and a password of at least 6 characters.')
+      return
+    }
+    setBusy(true)
+    try {
+      if (creating) {
+        const { data, error } = await signUpWithEmail(email.trim(), password)
+        if (error) throw error
+        if (!data?.session) {
+          setMessage('Almost there: check your email to confirm your account, then sign in.')
+          setCreating(false)
+        } else {
+          onClose?.()
+        }
+      } else {
+        const { error } = await signInWithEmail(email.trim(), password)
+        if (error) throw error
+        onClose?.()
+      }
+    } catch (err) {
+      setMessage(err.message || 'Something went wrong. Try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   const handle = async (provider) => {
     try {
@@ -21,7 +58,7 @@ export default function LoginModal({ onClose }) {
           <div className="modal-title-group">
             <span className="modal-icon">◆</span>
             <div>
-              <div className="modal-title">Sign in to Stream</div>
+              <div className="modal-title">Sign in to ION Qoders</div>
               <div className="modal-subtitle">
                 Continue without an account — you can sign in anytime.
               </div>
@@ -53,6 +90,38 @@ export default function LoginModal({ onClose }) {
             </svg>
             <span>Continue with Google</span>
           </button>
+
+          <div className="login-divider"><span>or use your ION account</span></div>
+
+          <form className="login-email-form" onSubmit={submitEmail}>
+            <input
+              className="modal-input"
+              type="email"
+              autoComplete="email"
+              placeholder="Email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+            <input
+              className="modal-input"
+              type="password"
+              autoComplete={creating ? 'new-password' : 'current-password'}
+              placeholder="Password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+            {message && <div className="login-message">{message}</div>}
+            <button className="login-provider-btn login-email-btn" type="submit" disabled={busy}>
+              {busy ? 'Please wait…' : creating ? 'Create account' : 'Sign in with email'}
+            </button>
+            <button
+              type="button"
+              className="login-switch"
+              onClick={() => { setCreating((c) => !c); setMessage('') }}
+            >
+              {creating ? 'I already have an account' : 'New here? Create an account'}
+            </button>
+          </form>
 
           <div className="login-modal-footnote">
             We only ask for basic profile info. Nothing else.

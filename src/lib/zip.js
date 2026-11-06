@@ -14,16 +14,16 @@ export function exportProjectToZip(files) {
   }
 
   // Add a README with context
-  const readme = `# Exported from Stream
+  const readme = `# Exported from ION Qoders
 
-This project was exported from Stream, an AI code editor.
+This project was exported from ION Qoders, an AI code editor.
 
 Files: ${Object.keys(files).length}
 Exported: ${new Date().toISOString()}
 
 To run this project, open the files in your editor of choice.
 `
-  tree['STREAM_README.md'] = strToU8(readme)
+  tree['README_QODERS.md'] = strToU8(readme)
 
   const zipped = zipSync(tree, { level: 6 })
   return new Blob([zipped], { type: 'application/zip' })

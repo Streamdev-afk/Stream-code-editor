@@ -6,7 +6,7 @@ import crypto from 'crypto'
 import path from 'path'
 import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
-import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS } from './usage.js'
+import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
 import {
   initializeTransaction,
   disableSubscription,
@@ -226,15 +226,88 @@ function buildPreviewHtml(files, activeFile, sessionId) {
 // AI ENDPOINTS
 // ============================================================
 
+// Vision model for questions that include a screenshot (override with the VISION_MODEL env var)
+const VISION_MODEL = process.env.VISION_MODEL || 'qwen/qwen3.8-27b'
+
+// Only small, real image data URLs, at most 2
+function cleanImages(images) {
+  if (!Array.isArray(images)) return []
+  return images
+    .filter((u) => typeof u === 'string' && /^data:image\/(png|jpe?g|webp);base64,/.test(u) && u.length < 2_000_000)
+    .slice(0, 2)
+}
+
+// Text + images in the shape the vision model wants
+function withImages(text, images) {
+  if (!images.length) return text
+  return [{ type: 'text', text }, ...images.map((url) => ({ type: 'image_url', image_url: { url } }))]
+}
+
+// "Read with the terminal" mode: the client sends a file index and the outputs of commands
+// the AI asked for earlier, instead of file contents.
+function exploreContext(body) {
+  if (!body || body.explore !== true || !Array.isArray(body.fileIndex)) return null
+  const index = body.fileIndex.slice(0, 200)
+    .map((f) => `${String(f.path).slice(0, 200)} (${Number(f.lines) || 0} lines, ${Number(f.chars) || 0} chars)`)
+    .join('\n')
+  const obs = (Array.isArray(body.observations) ? body.observations : []).slice(-12)
+    .map((o) => `$ ${String(o.cmd).slice(0, 300)}\n${String(o.output).slice(0, 3000)}`)
+    .join('\n\n')
+  return { index, obs, lastRound: body.lastRound === true }
+}
+
+const SHELL_RULES = (lastRound) => `
+
+## READING THE PROJECT WITH THE TERMINAL
+You do NOT get file contents up front, only a file index and the output of commands you ran so far.
+To read code, reply with ONLY this JSON (and nothing else):
+{"shell": ["grep -rn \"handleSave\" src", "sed -n '40,90p' src/App.jsx"]}
+Allowed read-only commands: ls, tree, find <text> / find . -name "*.jsx", cat -n <file>, head -n N <file>, tail -n N <file>, sed -n 'A,Bp' <file>, grep -rn [-i] <text> [path], wc -l <file>.
+- At most 4 commands per turn. Start with grep -rn to locate things, then sed -n on the exact range (30 to 60 lines). Never cat a big file.
+- The outputs are limited in size, so be specific.
+${lastRound
+  ? '- THIS IS YOUR LAST TURN: you must now answer with the final JSON. No more shell commands.'
+  : '- When you have what you need, reply with the final JSON answer instead of a shell request.'}`
+
+const CHAT_SHELL_RULES = (lastRound) => `
+
+## READING THE PROJECT WITH THE TERMINAL
+If answering needs code you cannot see, reply with ONLY a shell block (nothing before or after it):
+<shell>
+grep -rn "handleSave" src
+sed -n '40,90p' src/App.jsx
+</shell>
+Allowed read-only commands: ls, tree, find <text>, find . -name "*.jsx", cat -n <file>, head -n N <file>, tail -n N <file>, sed -n 'A,Bp' <file>, grep -rn [-i] <text> [path], wc -l <file>.
+- At most 4 commands. Use grep -rn first, then sed -n on the exact range (30 to 60 lines). Never cat a big file.
+${lastRound
+  ? '- THIS IS YOUR LAST TURN: answer now with what you know. Do not request more commands.'
+  : '- If the question does not need code, or you already have what you need, just answer normally.'}`
+
+const EDIT_FILE_RULES = `
+- For a change inside an EXISTING file use edit_file: { "type": "edit_file", "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] }.
+  "find" must be copied exactly from the file (without line numbers), be short (1 to 6 lines) and appear only once. Several edits per file are fine. This is far cheaper than rewriting the file.
+- Use write_file / create_file only for new files or when most of a file changes.`
+
 app.post('/api/chat', async (req, res) => {
-  const { messages, code, language, model, thinking, behavior } = req.body
-  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-  const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  const { messages, code, language, model, thinking, behavior, activeFile } = req.body
+  const images = cleanImages(req.body.images)
+  const ex = exploreContext(req.body)
+  // terminal-read follow-ups of the same question are free; the first round is charged
+  const followUp = !!ex && useTurn(req, req.body.turn)
+  const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium) + (images.length ? 1 : 0)
+  if (!followUp) {
+    const limit = await checkLimit(req, thinkingCost)
+    if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
   const behavioralSuffix = getBehavioralPrefix(behavior)
-  const systemPrompt = `You are Stream, a coding assistant inside a browser-based editor.
+  // Sending a whole big file with every message burns tokens: cap it
+  const MAX_CHAT_CODE = 6000
+  const codeForPrompt = code && code.length > MAX_CHAT_CODE
+    ? code.slice(0, MAX_CHAT_CODE) + `\n// ...(file continues, ${code.length - MAX_CHAT_CODE} more characters not shown. For work on other parts, use Agent mode, which reads exactly the lines it needs.)`
+    : code
+  const systemPrompt = `You are ION Qoders, a coding assistant inside a browser-based editor.
 
 ## WHAT YOU DO
 - Answer questions about code, explain concepts, help plan.
@@ -245,19 +318,31 @@ app.post('/api/chat', async (req, res) => {
 Concise. Use \`code\` for identifiers. Honest if their code is buggy.
 
 ${language ? `## CURRENT FILE\nLanguage: ${language}` : ''}
-${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}${behavioralSuffix}`
+${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${ex ? `\n## PROJECT (file index; contents are NOT shown)\n${ex.index}\n${activeFile ? `Open file: ${activeFile}\n` : ''}${ex.obs ? `\n## COMMAND OUTPUTS SO FAR\n${ex.obs}\n` : ''}${CHAT_SHELL_RULES(ex.lastRound)}` : ''}${behavioralSuffix}`
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
+    // attach screenshots to the newest user message
+    const chatMessages = messages.map((m) => ({ role: m.role, content: m.content }))
+    if (images.length) {
+      for (let i = chatMessages.length - 1; i >= 0; i--) {
+        if (chatMessages[i].role === 'user') {
+          chatMessages[i].content = withImages(String(chatMessages[i].content || 'What do you think of this image?'), images)
+          break
+        }
+      }
+    }
     const stream = await callGroqWithRetry({
-      model: model || 'openai/gpt-oss-20b',
-      messages: [{ role: 'system', content: systemPrompt }, ...messages],
+      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
+      messages: [{ role: 'system', content: systemPrompt }, ...chatMessages],
       stream: true,
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
+      ...(images.length ? { reasoning_format: 'hidden' } : {}),
     })
     let totalChars = 0
     for await (const chunk of stream) {
@@ -266,7 +351,7 @@ ${code ? `\n\`\`\`${language || ''}\n${code}\n\`\`\`` : ''}${behavioralSuffix}`
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    recordUsage(req, thinkingCost)
+    if (!followUp) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Chat error:', err)
@@ -327,9 +412,15 @@ app.post('/api/edit', async (req, res) => {
 
 app.post('/api/agent', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
-  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-  const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  const images = cleanImages(req.body.images)
+  const ex = exploreContext(req.body)
+  // later rounds of the same question (terminal reads) are free; the first round is charged
+  const followUp = !!ex && useTurn(req, req.body.turn)
+  const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium) + (images.length ? 1 : 0)
+  if (!followUp) {
+    const limit = await checkLimit(req, thinkingCost)
+    if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
   const MAX_FILE_CHARS = 2000
@@ -345,7 +436,7 @@ app.post('/api/agent', async (req, res) => {
     .join('\n\n')
     .slice(0, MAX_TOTAL_CHARS)
 
-  const SYSTEM = `You are Stream Agent, an autonomous coding agent.
+  const SYSTEM = `You are the ION Qoders Agent, an autonomous coding agent.
 
 You respond with ONLY a JSON object:
 
@@ -355,6 +446,7 @@ You respond with ONLY a JSON object:
   "operations": [
     { "type": "create_file", "path": "src/New.jsx", "content": "..." },
     { "type": "write_file",  "path": "src/App.jsx", "content": "..." },
+    { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] },
     { "type": "delete_file", "path": "src/Old.jsx" }
   ]
 }
@@ -363,7 +455,7 @@ No markdown, no fences, no prose outside JSON.
 
 ## RULES
 - Paths relative to project root ("src/App.jsx").
-- FULL file content for write_file / create_file.
+- FULL file content for write_file / create_file.${EDIT_FILE_RULES}
 - Prefer editing existing files over creating new ones.
 - No placeholders, no fake names.
 
@@ -377,28 +469,35 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${getBehavioralPrefix(behavior)}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
-  const USER = `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
-  conversation.push({ role: 'user', content: USER })
+  const USER = ex
+    ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
+    : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
+  conversation.push({ role: 'user', content: withImages(USER, images) })
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
     const stream = await callGroqWithRetry({
-      model: model || 'openai/gpt-oss-20b',
+      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
       max_tokens: thinking === 'ultra' ? 8000 : thinking === 'high' ? 6000 : 4096,
-      reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
-      response_format: { type: 'json_object' },
+      ...(images.length
+        ? { reasoning_format: 'hidden' }
+        : {
+            reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
+            response_format: { type: 'json_object' },
+          }),
     })
     let totalChars = 0
     for await (const chunk of stream) {
@@ -407,7 +506,7 @@ For React:
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    recordUsage(req, thinkingCost)
+    if (!followUp) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Agent error:', err)
@@ -418,9 +517,15 @@ For React:
 
 app.post('/api/agent/plan', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
-  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-  const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  const images = cleanImages(req.body.images)
+  const ex = exploreContext(req.body)
+  // later rounds of the same question (terminal reads) are free; the first round is charged
+  const followUp = !!ex && useTurn(req, req.body.turn)
+  const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium) + (images.length ? 1 : 0)
+  if (!followUp) {
+    const limit = await checkLimit(req, thinkingCost)
+    if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
   if (!prompt) return res.status(400).json({ error: 'prompt required' })
 
   const MAX_FILE_CHARS = 1000
@@ -436,7 +541,7 @@ app.post('/api/agent/plan', async (req, res) => {
     .join('\n\n')
     .slice(0, MAX_TOTAL_CHARS)
 
-  const SYSTEM = `You are Stream Planner, an expert software architect.
+  const SYSTEM = `You are the ION Qoders Planner, an expert software architect.
 
 Produce a STEP-BY-STEP PLAN. Do NOT write code. ONLY plan.
 
@@ -468,28 +573,35 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
-  const USER = `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
-  conversation.push({ role: 'user', content: USER })
+  const USER = ex
+    ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
+    : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
+  conversation.push({ role: 'user', content: withImages(USER, images) })
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
     const stream = await callGroqWithRetry({
-      model: model || 'openai/gpt-oss-20b',
+      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
       max_tokens: 2500,
-      reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
-      response_format: { type: 'json_object' },
+      ...(images.length
+        ? { reasoning_format: 'hidden' }
+        : {
+            reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
+            response_format: { type: 'json_object' },
+          }),
     })
     let totalChars = 0
     for await (const chunk of stream) {
@@ -498,7 +610,7 @@ No markdown. No fences. No prose outside JSON.${getBehavioralPrefix(behavior)}`
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty plan.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    recordUsage(req, thinkingCost)
+    if (!followUp) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Plan error:', err)
@@ -520,15 +632,21 @@ app.post('/api/agent/test', async (req, res) => {
 
 app.post('/api/agent/execute-step', async (req, res) => {
   const { step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior } = req.body
-  const thinkingCost = THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium
-  const limit = await checkLimit(req, thinkingCost)
-  if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  const ex = exploreContext(req.body)
+  const followUp = !!ex && useTurn(req, req.body.turn)
+  const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium)
+  if (!followUp) {
+    const limit = await checkLimit(req, thinkingCost)
+    if (!limit.allowed) return res.status(429).json({ error: limit.message, tier: limit.tier })
+  }
   if (!step) return res.status(400).json({ error: 'step required' })
 
   const stepText = `${step.title} ${step.description} ${(step.files || []).join(' ')}`
   const stepComplexity = stepText.length
-  const MAX_FILE_CHARS = stepComplexity > 200 ? 800 : 2000
-  const MAX_TOTAL_CHARS = stepComplexity > 200 ? 2500 : 5000
+  // small projects are sent whole (the client only sends files in full when they fit);
+  // bigger ones arrive as a file index and are read with the terminal instead
+  const MAX_FILE_CHARS = 6000
+  const MAX_TOTAL_CHARS = 6000
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
@@ -544,7 +662,7 @@ app.post('/api/agent/execute-step', async (req, res) => {
     ? allSteps.map((s) => `${s.id}. ${s.title} — ${s.description}`).join('\n')
     : ''
 
-  const SYSTEM = `You are Stream Agent executing ONE STEP of a multi-step plan.
+  const SYSTEM = `You are the ION Qoders Agent executing ONE STEP of a multi-step plan.
 
 ## THE FULL PLAN
 ${stepsSummary}
@@ -563,12 +681,13 @@ Respond with ONLY a JSON object:
   "explanation": "one-line summary",
   "operations": [
     { "type": "create_file", "path": "index.html", "content": "..." },
-    { "type": "write_file",  "path": "styles.css", "content": "..." }
+    { "type": "write_file",  "path": "styles.css", "content": "..." },
+    { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] }
   ]
 }
 
 ## RULES
-- FULL file content for create_file / write_file. No snippets, no diffs.
+- FULL file content for create_file / write_file. No snippets, no diffs.${EDIT_FILE_RULES}
 - Match existing style and language.
 - No placeholders, no "// TODO", no fake names.
 
@@ -589,21 +708,17 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
 
-  const USER = `Original user request: ${originalPrompt || '(unknown)'}
-
-Current project files:
-
-${fileList}
-
-${activeFile ? `User's open file: ${activeFile}\n` : ''}
-
-Execute step ${step.id} only.`
+  const USER = (ex
+    ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
+    : `Original user request: ${originalPrompt || '(unknown)'}\n\nCurrent project files:\n\n${fileList}\n`)
+    + `\n${activeFile ? `User's open file: ${activeFile}\n` : ''}\nExecute step ${step.id} only.`
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
+  if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
     const stream = await callGroqWithRetry({
@@ -624,7 +739,7 @@ Execute step ${step.id} only.`
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response. Try a simpler step.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    recordUsage(req, thinkingCost)
+    if (!followUp) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Execute-step error:', err)
@@ -647,7 +762,7 @@ app.post('/api/agent/diagnose', async (req, res) => {
     .join('\n\n')
     .slice(0, 5000)
 
-  const SYSTEM = `You are Stream Agent in TEST mode.
+  const SYSTEM = `You are the ION Qoders Agent in TEST mode.
 
 User asked: "${originalPrompt || '?'}"
 

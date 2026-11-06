@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { THINKING_LEVELS } from '../lib/settings'
 
-export default function ThinkingSwitcher({ value, onChange, disabled }) {
+export default function ThinkingSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
@@ -17,7 +17,7 @@ export default function ThinkingSwitcher({ value, onChange, disabled }) {
   }, [open])
 
   return (
-    <div className="thinking-switcher" ref={wrapRef}>
+    <div className={`thinking-switcher ${compact ? 'is-compact' : ''} ${up ? 'menu-up' : ''}`} ref={wrapRef}>
       <button
         className={`topbar-btn thinking-btn ${open ? 'active' : ''}`}
         disabled={disabled}
@@ -25,7 +25,7 @@ export default function ThinkingSwitcher({ value, onChange, disabled }) {
         title="How hard should the AI think? Higher = better answers, more usage."
       >
         <span className={`thinking-icon thinking-icon-${current.id}`}>◆</span>
-        {current.label}
+        <span className="switch-label">{current.label}</span>
         <span className="thinking-caret">▾</span>
       </button>
 

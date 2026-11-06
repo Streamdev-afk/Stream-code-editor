@@ -8,7 +8,9 @@ import DiffModal from './components/DiffModal'
 import AgentModal from './components/AgentModal'
 import Preview from './components/Preview'
 import LanguageSelect from './components/LanguageSelect'
-import { streamEdit } from './lib/ai'
+import { streamEdit, streamAgent } from './lib/ai'
+import { resolveOp } from './lib/ops'
+import ProjectMenu from './components/ProjectMenu'
 import './App.css'
 import './modern.css'
 import InputModal from './components/InputModal'
@@ -25,7 +27,6 @@ import { applyTheme } from './lib/theme'
 import HistoryPanel from './components/HistoryPanel'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
-import ModelSwitcher from './components/ModelSwitcher'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
@@ -54,8 +55,6 @@ import {
 import LoginModal from './components/LoginModal'
 import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
-import ThinkingSwitcher from './components/ThinkingSwitcher'
-import BehaviorSwitcher from './components/BehaviorSwitcher'
 import { startCheckout, redirectToCheckout } from './lib/paystack'
 import GitHubModal from './components/GitHubModal'
 
@@ -485,6 +484,11 @@ const [showLogin, setShowLogin] = useState(false)
           }
         } else if (op.type === 'delete_file') {
           delete nextFiles[op.path]
+        } else if (op.type === 'edit_file') {
+          nextFiles[op.path] = {
+            content: resolveOp(nextFiles, op).after,
+            language: getLanguageFromPath(op.path),
+          }
         }
       }
       currentFiles = nextFiles
@@ -703,6 +707,37 @@ const saveActive = () => {
     if (!editor) return
     const current = activeContent
 
+    // Big file: do not send it whole. The AI reads only the lines it needs with the terminal
+    // and proposes small edits, which open in the normal review screen.
+    if (['fix', 'refactor', 'comment'].includes(action) && current.length > 6000) {
+      const asks = {
+        fix: `Find and fix bugs in ${activeFile}. Read only the parts you need with the shell, and change only what is broken.`,
+        refactor: `Refactor ${activeFile} to be cleaner without changing behavior. Read only the parts you need with the shell and make small targeted edits.`,
+        comment: `Add helpful comments to ${activeFile} without changing logic. Read it in pieces with the shell and make small targeted edits.`,
+      }
+      setBusy(true); setStatus(`AI: reading ${activeFile}…`)
+      try {
+        const plan = await streamAgent(
+          {
+            prompt: asks[action], files, activeFile, history: [],
+            model: settings.model, thinking: settings.thinking || 'medium', behavior: settings.behavior || 'friendly',
+          },
+          undefined,
+          (cmd) => setStatus(`AI reading: ${cmd.slice(0, 50)}`)
+        )
+        setBusy(false); setStatus('Ready')
+        if (!plan.operations || plan.operations.length === 0) {
+          showToast(plan.explanation || 'No changes needed', 'info')
+          return
+        }
+        setPendingPlan({ plan, originalPrompt: asks[action] })
+      } catch (err) {
+        setBusy(false); setStatus('Ready')
+        showToast(`AI error: ${err.message}`, 'error')
+      }
+      return
+    }
+
     if (action === 'selection' && selection && selection.trim()) {
       setBusy(true); setStatus(`AI: ${label || instruction}`)
       let result = ''
@@ -784,7 +819,12 @@ const saveActive = () => {
       }
     } else if (op.type === 'delete_file') {
       delete nextFiles[op.path]
-    }
+    } else if (op.type === 'edit_file') {
+          nextFiles[op.path] = {
+            content: resolveOp(nextFiles, op).after,
+            language: getLanguageFromPath(op.path),
+          }
+        }
   }
   setFiles(nextFiles)
 
@@ -1063,14 +1103,31 @@ case 'importZip': setShowImport(true); break
     showToast(`Deleted ${path}`, 'info')
   }
 
+  // Quick AI actions (complete / fix / refactor / comment) sit at the right of the editor tabs
+  const aiActionsSlot = (
+    <AIDropdown
+      disabled={busy || !activeFile || viewMode !== 'code'}
+      onAction={(action, label) => runEdit({ action, label })}
+    />
+  )
+
   return (
     <div className="app">
       <div className="topbar">
-        <div className="logo">
-          <div className="logo-dot" />
-          STREAM
+        <div className="topbar-left">
+          <div className="logo">
+            <div className="logo-dot" />
+            <span className="logo-text">ION Qoders</span>
+          </div>
+          <ProjectMenu
+            canSave={!!activeFile}
+            canRevert={history.length > 0}
+            onSave={saveActive}
+            onRevert={revertLast}
+            onExport={handleExportZip}
+            onImport={() => setShowImport(true)}
+          />
         </div>
-        <div className="topbar-spacer" />
 
         {/* View toggle */}
         <div className="view-toggle">
@@ -1088,104 +1145,60 @@ case 'importZip': setShowImport(true); break
           </button>
         </div>
 
-<AIDropdown
-  disabled={busy || !activeFile || viewMode !== 'code'}
-  onAction={(action, label) => runEdit({ action, label })}
-/>
-
-<ModelSwitcher
-  value={settings.model}
-  onChange={(m) => setSettings((s) => ({ ...s, model: m }))}
-  disabled={busy}
-/>
-
-<ThinkingSwitcher
-  value={settings.thinking || 'medium'}
-  onChange={(t) => setSettings((s) => ({ ...s, thinking: t }))}
-  disabled={busy}
-/>
-<BehaviorSwitcher
-  value={settings.behavior || 'friendly'}
-  onChange={(b) => setSettings((s) => ({ ...s, behavior: b }))}
-  disabled={busy}
-/>
-        <button
-          className="topbar-btn"
-          disabled={!activeFile}
-          onClick={saveActive}
-          title="Ctrl+S"
-        >💾 Save</button>
+        <div className="topbar-right">
+          {!isMobile && (
+            <>
+              <button
+                className={`topbar-btn icon ${showSidebar ? 'active' : ''}`}
+                onClick={() => setShowSidebar((s) => !s)}
+                title="Toggle sidebar (Ctrl+B)"
+              >
+                ☰
+              </button>
+              <button
+                className={`topbar-btn icon ${showAI ? 'active' : ''}`}
+                onClick={() => setShowAI((s) => !s)}
+                title="Toggle AI panel (Ctrl+I)"
+              >
+                🤖
+              </button>
+              <button
+                className={`topbar-btn icon ${bottomOpen ? 'active' : ''}`}
+                onClick={() => setBottomOpen(!bottomOpen)}
+                title="Toggle terminal / bottom panel (Ctrl+J)"
+              >
+                ▤
+              </button>
+            </>
+          )}
 
           <button
-  className="topbar-btn"
-  onClick={handleExportZip}
-  title="Download project as .zip"
->📦</button>
+            className="topbar-btn icon"
+            onClick={() => setShowSettings(true)}
+            title="Settings"
+          >⚙</button>
 
-<button
-  className="topbar-btn"
-  onClick={() => setShowImport(true)}
-  title="Import project from .zip"
->📥</button>
+          <UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />
 
-        <button
-          className="topbar-btn"
-          disabled={history.length === 0}
-          onClick={revertLast}
-          title="Revert last AI change"
-        >↺ Revert</button>
+          {syncing && (
+            <span className="sync-indicator" title="Syncing to cloud...">
+              ⟳
+            </span>
+          )}
 
-        <button
-  className={`topbar-btn icon ${showSidebar ? 'active' : ''}`}
-  onClick={() => setShowSidebar((s) => !s)}
-  title="Toggle sidebar (Ctrl+B)"
->
-  ☰
-</button>
-
-<button
-  className={`topbar-btn icon ${showAI ? 'active' : ''}`}
-  onClick={() => setShowAI((s) => !s)}
-  title="Toggle AI panel (Ctrl+I)"
->
-  🤖
-</button>
-
-<button
-  className={`topbar-btn icon ${bottomOpen ? 'active' : ''}`}
-  onClick={() => setBottomOpen(!bottomOpen)}
-  title="Toggle bottom panel (Ctrl+J)"
->
-
-  ▤
-</button>
-
-<button
-  className="topbar-btn icon"
-  onClick={() => setShowSettings(true)}
-  title="Settings"
->⚙</button>
-
-<UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />
-
-{syncing && (
-  <span className="sync-indicator" title="Syncing to cloud...">
-    ⟳
-  </span>
-)}
-
-{user ? (
-  <UserMenu />
-) : (
-  <button
-    className="topbar-btn primary"
-    onClick={() => setShowLogin(true)}
-    title="Sign in"
-  >
-    Sign in
-  </button>
-)}
-</div>
+          {user ? (
+            <UserMenu />
+          ) : (
+            <button
+              className="topbar-btn primary"
+              onClick={() => setShowLogin(true)}
+              title="Sign in"
+            >
+              Sign in
+            </button>
+          )}
+        </div>
+      </div>
 
       
 {isMobile ? (
@@ -1214,6 +1227,7 @@ case 'importZip': setShowImport(true); break
               dirty={dirty}
               onTabClick={setActiveFile}
               onTabClose={closeTab}
+              rightSlot={aiActionsSlot}
             />
             {activeFile ? (
               <Editor
@@ -1255,11 +1269,20 @@ case 'importZip': setShowImport(true); break
           onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
           onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
           model={settings.model}
+          onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
+          onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
+          onBehaviorChange={(b) => setSettings((x) => ({ ...x, behavior: b }))}
           thinking={settings.thinking || 'medium'}
           behavior={settings.behavior || 'friendly'}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
           planningMode={true}
+          sessions={sessionStore.sessions}
+          activeSessionId={sessionStore.activeSessionId}
+          onSelectSession={handleSelectSession}
+          onNewSession={handleNewSession}
+          onRenameSession={handleRenameSession}
+          onDeleteSession={handleDeleteSession}
         />
       </div>
     )}
@@ -1321,6 +1344,7 @@ case 'importZip': setShowImport(true); break
             dirty={dirty}
             onTabClick={setActiveFile}
             onTabClose={closeTab}
+              rightSlot={aiActionsSlot}
           />
           {activeFile ? (
             <Editor
@@ -1361,6 +1385,9 @@ case 'importZip': setShowImport(true); break
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
         onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
         model={settings.model}
+          onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
+          onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
+          onBehaviorChange={(b) => setSettings((x) => ({ ...x, behavior: b }))}
         thinking={settings.thinking || 'medium'}
         testAfterApply={testAfterApply}
         onTestToggle={setTestAfterApply}
@@ -1455,7 +1482,12 @@ case 'importZip': setShowImport(true); break
                   }
                 } else if (op.type === 'delete_file') {
                   delete currentFiles[op.path]
-                }
+                } else if (op.type === 'edit_file') {
+          currentFiles[op.path] = {
+            content: resolveOp(currentFiles, op).after,
+            language: getLanguageFromPath(op.path),
+          }
+        }
               }
 
               setFiles({ ...currentFiles })

@@ -15,7 +15,7 @@ async function ghFetch(path, token, options = {}) {
       Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'Stream-Editor',
+      'User-Agent': 'ION-Qoders',
       ...(options.headers || {}),
     },
   })
@@ -117,7 +117,7 @@ export async function getFileContent(token, owner, repo, path, ref) {
  * Push one file (create or update).
  * Returns the commit SHA on success.
  */
-export async function pushFile(token, owner, repo, branch, path, content, message = 'Update via Stream') {
+export async function pushFile(token, owner, repo, branch, path, content, message = 'Update via ION Qoders') {
   const sha = await getFileSha(token, owner, repo, path, branch)
   const body = {
     message,
@@ -174,7 +174,7 @@ async function setRef(token, owner, repo, branch, sha) {
  * Push multiple files in a single commit.
  * This is the atomic, efficient way — one commit for N files.
  */
-export async function pushFiles(token, owner, repo, branch, files, message = 'Update via Stream') {
+export async function pushFiles(token, owner, repo, branch, files, message = 'Update via ION Qoders') {
   // files: [{ path, content }, ...]
 
   // Get the current HEAD

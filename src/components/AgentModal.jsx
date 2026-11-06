@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { resolveOp } from '../lib/ops'
 
 function simpleDiff(a = '', b = '') {
   const A = a.split('\n')
@@ -19,6 +20,7 @@ function simpleDiff(a = '', b = '') {
 const OP_LABEL = {
   create_file: 'new file',
   write_file: 'modify',
+  edit_file: 'edit',
   delete_file: 'delete',
 }
 
@@ -29,12 +31,13 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
 
   const diffs = useMemo(
     () => ops.map((op) => {
-      const before = files[op.path]?.content ?? ''
-      const after = op.type === 'delete_file' ? '' : (op.content ?? '')
-      return simpleDiff(before, after)
+      const r = resolveOp(files, op)
+      return simpleDiff(r.before, r.after)
     }),
     [ops, files]
   )
+
+  const problems = useMemo(() => ops.map((op) => resolveOp(files, op).errors), [ops, files])
 
   const toggle = (i) => {
     setSelected((s) => {
@@ -64,7 +67,7 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
             <span className="modal-icon">◆</span>
             <div>
               <div className="modal-title">
-                Stream wants to make {ops.length} change{ops.length === 1 ? '' : 's'}
+                ION Qoders wants to make {ops.length} change{ops.length === 1 ? '' : 's'}
               </div>
               {plan.explanation && (
   <div className="modal-subtitle">{plan.explanation}</div>
@@ -117,6 +120,7 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
                     <div className="agent-file-path">{op.path}</div>
                     <div className={`agent-file-op op-${op.type}`}>
                       {OP_LABEL[op.type] || op.type}
+                      {problems[i]?.length > 0 && <span title={problems[i].join('\n')}> ⚠ check</span>}
                     </div>
                   </div>
                 </div>

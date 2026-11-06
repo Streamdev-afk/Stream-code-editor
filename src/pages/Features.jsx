@@ -7,7 +7,7 @@ export default function Features() {
       <nav className="landing-nav">
         <Link to="/" className="landing-nav-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </Link>
         <div className="landing-nav-links">
           <Link to="/features" className="landing-nav-link active">Features</Link>
@@ -31,7 +31,7 @@ export default function Features() {
           <FeatureCard
             icon="🧭"
             title="AI that plans first"
-            desc="Tell Stream what to build. It breaks the task into steps you can review, then executes them one at a time — no more one-shot prompt roulette."
+            desc="Tell ION Qoders what to build. It breaks the task into steps you can review, then executes them one at a time — no more one-shot prompt roulette."
           />
           <FeatureCard
             icon="📁"
@@ -94,20 +94,20 @@ export default function Features() {
       <section className="landing-final">
         <h2 className="landing-final-title">Ready to build?</h2>
         <p className="landing-final-sub">
-          Open Stream and start your first project in 5 seconds.
+          Open ION Qoders and start your first project in 5 seconds.
         </p>
         <Link to="/editor" className="landing-btn landing-btn-primary landing-btn-large">
-          Open Stream →
+          Open ION Qoders →
         </Link>
       </section>
 
       <footer className="landing-footer">
         <div className="landing-footer-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </div>
         <div className="landing-footer-copy">
-          © {new Date().getFullYear()} Stream. Built with Stream.
+          © {new Date().getFullYear()} ION Qoders. Built with ION Qoders.
         </div>
       </footer>
     </div>

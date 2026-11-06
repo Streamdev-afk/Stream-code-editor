@@ -7,6 +7,8 @@ const AuthContext = createContext({
   loading: true,
   signInWithGitHub: async () => {},
   signInWithGoogle: async () => {},
+  signInWithEmail: async () => {},
+  signUpWithEmail: async () => {},
   signOut: async () => {},
 })
 
@@ -61,6 +63,17 @@ export function AuthProvider({ children }) {
     })
   }
 
+  // The ION app signs people in with email + password, so Qoders accepts the same account
+  const signInWithEmail = async (email, password) => {
+    if (!supabase) return { error: new Error('Supabase not configured') }
+    return supabase.auth.signInWithPassword({ email, password })
+  }
+
+  const signUpWithEmail = async (email, password) => {
+    if (!supabase) return { error: new Error('Supabase not configured') }
+    return supabase.auth.signUp({ email, password, options: { emailRedirectTo: window.location.origin } })
+  }
+
   const signOut = async () => {
     if (!supabase) return
     return supabase.auth.signOut()
@@ -72,6 +85,8 @@ export function AuthProvider({ children }) {
     loading,
     signInWithGitHub,
     signInWithGoogle,
+    signInWithEmail,
+    signUpWithEmail,
     signOut,
   }
 

@@ -8,7 +8,7 @@ export default function Landing() {
       <nav className="landing-nav">
         <Link to="/" className="landing-nav-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </Link>
         <div className="landing-nav-links">
           <Link to="/features" className="landing-nav-link">Features</Link>
@@ -29,13 +29,13 @@ export default function Landing() {
           <span className="landing-hero-accent">thinks in steps.</span>
         </h1>
         <p className="landing-hero-sub">
-          Stream is a browser-based code editor where the AI doesn't just answer questions —
+          ION Qoders is a browser-based code editor where the AI doesn't just answer questions —
           it plans, writes, tests, and fixes your code across multiple files.
           No install. No setup. Just open and build.
         </p>
         <div className="landing-hero-actions">
           <Link to="/editor" className="landing-btn landing-btn-primary">
-            Open Stream →
+            Open ION Qoders →
           </Link>
           <Link to="/features" className="landing-btn landing-btn-ghost">
             See features
@@ -67,7 +67,7 @@ export default function Landing() {
           <div className="landing-screenshot-body">
             <img
               src="/screenshot.png"
-              alt="Stream editor"
+              alt="ION Qoders editor"
               className="landing-screenshot-img"
               onError={(e) => {
                 e.target.style.display = 'none'
@@ -98,7 +98,7 @@ export default function Landing() {
           <HowStep
             num="2"
             title="Review the plan"
-            desc="Stream breaks the task into steps. Edit the plan, skip what you don't need."
+            desc="ION Qoders breaks the task into steps. Edit the plan, skip what you don't need."
           />
           <HowStep
             num="3"
@@ -117,10 +117,10 @@ export default function Landing() {
       <section className="landing-final">
         <h2 className="landing-final-title">Ready to build?</h2>
         <p className="landing-final-sub">
-          Open Stream and start your first project in 5 seconds.
+          Open ION Qoders and start your first project in 5 seconds.
         </p>
         <Link to="/editor" className="landing-btn landing-btn-primary landing-btn-large">
-          Open Stream →
+          Open ION Qoders →
         </Link>
       </section>
 
@@ -128,10 +128,10 @@ export default function Landing() {
       <footer className="landing-footer">
         <div className="landing-footer-brand">
           <div className="logo-dot" />
-          STREAM
+          ION Qoders
         </div>
         <div className="landing-footer-copy">
-          © {new Date().getFullYear()} Stream. Built with Stream.
+          © {new Date().getFullYear()} ION Qoders. Built with ION Qoders.
         </div>
       </footer>
     </div>

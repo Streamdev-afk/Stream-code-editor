@@ -137,7 +137,7 @@ export default function createGithubRouter({ supabaseAdmin }) {
       if (!exists) {
         await createRepo(token, safeRepo, {
           isPrivate,
-          description: sessionTitle || `Project from Stream`,
+          description: sessionTitle || `Project from ION Qoders`,
         })
         // GitHub needs a moment after repo creation
         await new Promise((r) => setTimeout(r, 1000))
@@ -160,7 +160,7 @@ export default function createGithubRouter({ supabaseAdmin }) {
         safeRepo,
         branch,
         fileList,
-        `Stream: ${sessionTitle || 'Update'}`
+        `ION Qoders: ${sessionTitle || 'Update'}`
       )
 
       res.json({
@@ -188,7 +188,7 @@ export default function createGithubRouter({ supabaseAdmin }) {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github+json',
-          'User-Agent': 'Stream-Editor',
+          'User-Agent': 'ION-Qoders',
         },
       })
       if (!res2.ok) throw new Error(`GitHub HTTP ${res2.status}`)

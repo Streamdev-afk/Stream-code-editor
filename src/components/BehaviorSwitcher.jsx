@@ -8,7 +8,7 @@ const MODES = [
   { id: 'creative',     label: 'Creative',     icon: '✨', hint: 'Explores alternatives, tradeoffs' },
 ]
 
-export default function BehaviorSwitcher({ value, onChange, disabled }) {
+export default function BehaviorSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
@@ -24,7 +24,7 @@ export default function BehaviorSwitcher({ value, onChange, disabled }) {
   }, [open])
 
   return (
-    <div className="behavior-switcher" ref={wrapRef}>
+    <div className={`behavior-switcher ${compact ? 'is-compact' : ''} ${up ? 'menu-up' : ''}`} ref={wrapRef}>
       <button
         className={`topbar-btn behavior-btn ${open ? 'active' : ''}`}
         disabled={disabled}
@@ -32,7 +32,7 @@ export default function BehaviorSwitcher({ value, onChange, disabled }) {
         title="How should the AI talk to you?"
       >
         <span className="behavior-icon">{current.icon}</span>
-        {current.label}
+        <span className="switch-label">{current.label}</span>
         <span className="behavior-caret">▾</span>
       </button>
 

@@ -1,5 +1,6 @@
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
+import { createShell, runCommand, isReadOnlyCommand } from './shell'
 
 export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/edit`, {
@@ -37,137 +38,168 @@ export async function streamEdit({ action, code, selection, language, instructio
   }
 }
 
-export async function streamAgent({ prompt, files, activeFile, history, model, thinking, behavior }, onChunk) {
-  const res = await apiFetch(`${API_BASE}/api/agent`, {
+// ------------------------------------------------------------------
+// Agent + planner. Small projects are sent as before. Bigger ones are NOT sent whole:
+// the AI gets only a file index and reads exactly the lines it needs by asking for
+// read-only terminal commands (grep -rn, sed -n, head ...), which run here in the
+// browser. That cuts tokens a lot and stops big files being cut off halfway.
+// ------------------------------------------------------------------
+
+const SMALL_PROJECT_CHARS = 6000
+const MAX_SHELL_ROUNDS = 4
+const MAX_OUTPUT_CHARS = 2500
+const MAX_OBSERVATION_CHARS = 9000
+const IGNORED = /(^|\/)(node_modules|\.git|dist|build)\/|\.gitkeep$|\.lock$|\.log$|package-lock\.json$/
+
+function projectChars(files) {
+  let n = 0
+  for (const [p, f] of Object.entries(files || {})) {
+    if (!IGNORED.test(p)) n += (f?.content || '').length
+  }
+  return n
+}
+
+function buildIndex(files) {
+  return Object.entries(files || {})
+    .filter(([p]) => !IGNORED.test(p))
+    .sort(([a], [b]) => a.localeCompare(b))
+    .slice(0, 200)
+    .map(([path, f]) => {
+      const content = f?.content || ''
+      return { path, lines: content ? content.split('\n').length : 0, chars: content.length }
+    })
+}
+
+function runForAI(shell, cmd) {
+  if (!isReadOnlyCommand(cmd)) {
+    return 'refused: only read commands are allowed (ls, tree, find, cat, head, tail, sed -n, grep, wc)'
+  }
+  const out = runCommand(shell, cmd).output || '(no output)'
+  return out.length > MAX_OUTPUT_CHARS
+    ? out.slice(0, MAX_OUTPUT_CHARS) + `\n…(cut at ${MAX_OUTPUT_CHARS} characters, ask for a narrower range)`
+    : out
+}
+
+function trimObservations(obs) {
+  const size = () => obs.reduce((n, o) => n + o.cmd.length + o.output.length, 0)
+  while (size() > MAX_OBSERVATION_CHARS && obs.length > 1) obs.shift()
+}
+
+async function postStream(path, body, onChunk) {
+  const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking, behavior }),
+    body: JSON.stringify(body),
   })
-
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  if (!res.ok) {
+    let msg = `HTTP ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let full = ''
+  let turn = null
+  let streamError = null
 
   while (true) {
     const { done, value } = await reader.read()
     if (done) break
-
     buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n\n')
-    buffer = lines.pop() || ''
-
-    for (const line of lines) {
+    const parts = buffer.split('\n\n')
+    buffer = parts.pop() || ''
+    for (const line of parts) {
       if (!line.startsWith('data: ')) continue
       const data = line.slice(6)
       if (data === '[DONE]') continue
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.error) throw new Error(parsed.error)
-        if (parsed.text) {
-          full += parsed.text
-          onChunk?.(parsed.text, full)
-        }
-      } catch (e) {
-        // ignore partial JSON chunks
+      let parsed
+      try { parsed = JSON.parse(data) } catch { continue }
+      if (parsed.error) { streamError = parsed.error; continue }
+      if (parsed.turn) turn = parsed.turn
+      if (parsed.text) {
+        full += parsed.text
+        onChunk?.(parsed.text, full)
       }
     }
   }
-
-  try {
-    return extractJSONLocal(full)
-  } catch (e) {
-    console.error('Agent raw output:', full)
-    throw new Error('AI returned invalid JSON. Try again or rephrase.')
-  }
+  if (streamError && !full) throw new Error(streamError)
+  return { full, turn }
 }
 
-export async function planTask({ prompt, files, activeFile, history, model, thinking, behavior }, onChunk) {
-  const res = await apiFetch(`${API_BASE}/api/agent/plan`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ prompt, files, activeFile, history, model, thinking, behavior }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+async function runExplorable(path, args, onChunk, onStatus, kind) {
+  // everything except the files and the status callback is passed through to the server as is
+  const { files, onStatus: argStatus, ...base } = args
+  onStatus = onStatus || argStatus
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let full = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6)
-      if (data === '[DONE]') continue
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.error) throw new Error(parsed.error)
-        if (parsed.text) {
-          full += parsed.text
-          onChunk?.(parsed.text, full)
-        }
-      } catch {}
+  const parse = (full) => {
+    try {
+      return extractJSONLocal(full)
+    } catch {
+      console.error(`${kind} raw output:`, full)
+      throw new Error(
+        kind === 'Plan'
+          ? 'Planner returned invalid JSON. Try again or rephrase.'
+          : kind === 'Step'
+            ? 'Step execution returned invalid JSON. Try again or rephrase.'
+            : 'AI returned invalid JSON. Try again or rephrase.'
+      )
     }
   }
 
-  try {
-    return extractJSONLocal(full)
-  } catch (e) {
-    console.error('Plan raw output:', full)
-    throw new Error('Planner returned invalid JSON. Try again or rephrase.')
+  // small project: send it all, like before
+  if (projectChars(files) <= SMALL_PROJECT_CHARS) {
+    const { full } = await postStream(path, { ...base, files }, onChunk)
+    return parse(full)
   }
-}
 
-export async function executeStep({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior }, onChunk) {
-  const res = await apiFetch(`${API_BASE}/api/agent/execute-step`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior }),
-  })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  // bigger project: let the AI read only what it needs
+  const shell = createShell(files, '/')
+  const observations = []
+  const index = buildIndex(files)
+  let turn = null
 
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let full = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-    const lines = buffer.split('\n\n')
-    buffer = lines.pop() || ''
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6)
-      if (data === '[DONE]') continue
-      try {
-        const parsed = JSON.parse(data)
-        if (parsed.error) throw new Error(parsed.error)
-        if (parsed.text) {
-          full += parsed.text
-          onChunk?.(parsed.text, full)
-        }
-      } catch {}
+  for (let round = 0; round <= MAX_SHELL_ROUNDS; round++) {
+    const lastRound = round === MAX_SHELL_ROUNDS
+    const { full, turn: t } = await postStream(
+      path,
+      { ...base, explore: true, fileIndex: index, observations, turn, lastRound },
+      onChunk
+    )
+    turn = t || turn
+    const parsed = parse(full)
+    const cmds = Array.isArray(parsed.shell) ? parsed.shell.filter((c) => typeof c === 'string').slice(0, 4) : []
+    if (cmds.length && !lastRound) {
+      for (const c of cmds) {
+        onStatus?.(c)
+        observations.push({ cmd: c, output: runForAI(shell, c) })
+      }
+      trimObservations(observations)
+      continue
     }
-  }
-
-  try {
-    return extractJSONLocal(full)
-  } catch (e) {
-    console.error('Execute-step raw output:', full)
-    console.error('First 500 chars:', full.slice(0, 500))
-    throw new Error('Step execution returned invalid JSON. Try again or rephrase.')
+    return parsed
   }
 }
+
+export function streamAgent(args, onChunk, onStatus) {
+  return runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
+}
+
+export function planTask(args, onChunk, onStatus) {
+  return runExplorable('/api/agent/plan', args, onChunk, onStatus, 'Plan')
+}
+
+export function executeStep(args, onChunk, onStatus) {
+  return runExplorable('/api/agent/execute-step', args, onChunk, onStatus, 'Step')
+}
+
+// Helpers the chat panel uses to read the project the same way
+export const shouldExplore = (files) => projectChars(files) > SMALL_PROJECT_CHARS
+export { buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS }
 
 function extractJSONLocal(str) {
   let s = str.trim()

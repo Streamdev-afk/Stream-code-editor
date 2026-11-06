@@ -57,6 +57,18 @@ export default function UserMenu() {
             {user.email && <div className="user-menu-email">{user.email}</div>}
           </div>
           <div className="user-menu-sep" />
+          {import.meta.env.VITE_ION_URL && (
+            <a
+              className="user-menu-item"
+              href={import.meta.env.VITE_ION_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+            >
+              <span className="user-menu-item-icon">←</span>
+              Back to ION
+            </a>
+          )}
           <div
             className="user-menu-item"
             onClick={async () => {

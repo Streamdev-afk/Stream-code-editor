@@ -1,10 +1,11 @@
 import { getFileIcon } from '../lib/fileIcons'
 
-export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClose }) {
+export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClose, rightSlot }) {
   if (openTabs.length === 0) return null
 
   return (
     <div className="tabs-bar">
+      <div className="tabs-scroll">
       {openTabs.map((path) => {
         const name = path.split('/').pop()
         const isActive = path === activeFile
@@ -33,6 +34,8 @@ export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClo
         )
       })}
       <div className="tabs-fill" />
+      </div>
+      {rightSlot && <div className="tabs-right">{rightSlot}</div>}
     </div>
   )
 }

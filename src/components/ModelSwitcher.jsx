@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { AVAILABLE_MODELS } from '../lib/settings'
 
-export default function ModelSwitcher({ value, onChange, disabled }) {
+export default function ModelSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
 
@@ -17,7 +17,7 @@ export default function ModelSwitcher({ value, onChange, disabled }) {
   }, [open])
 
   return (
-    <div className="model-switcher" ref={wrapRef}>
+    <div className={`model-switcher ${compact ? 'is-compact' : ''} ${up ? 'menu-up' : ''}`} ref={wrapRef}>
       <button
         className={`topbar-btn model-btn ${open ? 'active' : ''}`}
         disabled={disabled}
@@ -25,7 +25,7 @@ export default function ModelSwitcher({ value, onChange, disabled }) {
         title="Change AI model"
       >
         <span className="model-dot" />
-        {current.label}
+        <span className="switch-label">{current.label}</span>
         <span className="model-caret">▾</span>
       </button>
       {open && (
