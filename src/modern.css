@@ -674,3 +674,18 @@ body::before {
   padding: 4px;
 }
 .login-switch:hover { color: var(--text-primary); }
+
+/* ==========================================================================
+   v5: tools hover inside the text box, usage inside settings
+   ========================================================================== */
+.chat-composer { position: relative; }
+.chat-composer .chat-input { min-height: 88px; padding: 2px 4px 40px; }
+.composer-bar { position: absolute; left: 8px; right: 8px; bottom: 6px; pointer-events: none; }
+.composer-bar > * { pointer-events: auto; }
+.composer-tools { flex-wrap: nowrap; }
+.aichat-header-actions { display: flex; align-items: center; gap: 4px; }
+.aichat-header-actions .behavior-switcher .topbar-btn { padding: 4px 8px; }
+.settings-usage .usage-menu { position: static !important; width: 100% !important; box-shadow: none; margin-top: 8px; }
+
+.composer-icon.web-on { color: var(--accent); background: var(--accent-dim); }
+.composer-icon:not(.web-on) { opacity: .6; }

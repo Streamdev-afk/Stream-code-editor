@@ -1,3 +1,4 @@
+import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
 import { streamAgent, planTask } from '../lib/ai'
 import { API_BASE } from '../lib/api'
@@ -49,6 +50,7 @@ export default function AIChat({
   onDeleteSession,
 }) {
   const [showSessions, setShowSessions] = useState(false)
+  const [webOn, setWebOn] = useState(getWeb())
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
@@ -144,10 +146,10 @@ useEffect(() => {
         const lastRound = round === MAX_SHELL_ROUNDS
         const body = explore
           ? {
-              messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs,
+              messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs, web: getWeb(),
               explore: true, fileIndex: index, observations, turn, lastRound,
             }
-          : { messages: apiMessages, code, language, model, thinking, behavior, images: imgs }
+          : { messages: apiMessages, code, language, model, thinking, behavior, images: imgs, web: getWeb() }
 
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 60000)
@@ -380,6 +382,7 @@ setMessages((m) => {
             </button>
           </div>
           <div className="aichat-header-actions">
+            <BehaviorSwitcher value={behavior} onChange={onBehaviorChange} disabled={streaming} compact />
             <button
               className={`aichat-icon-btn ${showSearch ? 'active' : ''}`}
               onClick={() => {
@@ -631,9 +634,14 @@ setMessages((m) => {
                   e.target.value = ''
                 }}
               />
+              <button
+                className={`composer-icon ${webOn ? 'web-on' : ''}`}
+                title={webOn ? 'Web search on: Qoders looks things up when needed (click to turn off)' : 'Web search off (click to turn on)'}
+                onClick={() => { setWeb(!webOn); setWebOn(!webOn) }}
+                disabled={streaming}
+              >🌐</button>
               <ModelSwitcher value={model} onChange={onModelChange} disabled={streaming} compact up />
               <ThinkingSwitcher value={thinking} onChange={onThinkingChange} disabled={streaming} compact up />
-              <BehaviorSwitcher value={behavior} onChange={onBehaviorChange} disabled={streaming} compact up />
             </div>
             <button
               className="chat-send"

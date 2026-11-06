@@ -1,3 +1,4 @@
+import { getWeb } from './web'
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 import { createShell, runCommand, isReadOnlyCommand } from './shell'
@@ -89,7 +90,7 @@ async function postStream(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+    body: JSON.stringify({ ...body, web: getWeb() }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`

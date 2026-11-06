@@ -1,6 +1,11 @@
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../lib/auth'
 
+const isAndroid = typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+// Android: open the installed ION app, fall back to VITE_ION_URL if it is not installed.
+// Desktop has no ION app, so there it offers VITE_ION_APK_URL (download link) instead.
+const ionIntent = `intent://#Intent;package=com.streamdevafk.ion;action=android.intent.action.MAIN;category=android.intent.category.LAUNCHER;S.browser_fallback_url=${encodeURIComponent(import.meta.env.VITE_ION_URL || '')};end`
+
 export default function UserMenu() {
   const { user, signOut } = useAuth()
   const [open, setOpen] = useState(false)
@@ -57,16 +62,28 @@ export default function UserMenu() {
             {user.email && <div className="user-menu-email">{user.email}</div>}
           </div>
           <div className="user-menu-sep" />
-          {import.meta.env.VITE_ION_URL && (
+          {import.meta.env.VITE_ION_URL && isAndroid && (
             <a
               className="user-menu-item"
-              href={import.meta.env.VITE_ION_URL}
+              href={ionIntent}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
             >
               <span className="user-menu-item-icon">←</span>
               Back to ION
+            </a>
+          )}
+          {!isAndroid && import.meta.env.VITE_ION_APK_URL && (
+            <a
+              className="user-menu-item"
+              href={import.meta.env.VITE_ION_APK_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpen(false)}
+            >
+              <span className="user-menu-item-icon">⬇</span>
+              Get the ION app
             </a>
           )}
           <div

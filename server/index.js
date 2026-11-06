@@ -20,8 +20,10 @@ import {
   isConfigured as subsConfigured,
 } from './subscriptions.js'
 import createGithubRouter from './githubRoutes.js'
+import { webSearch, webBlock } from './websearch.js'
 
 const app = express()
+app.set('trust proxy', 1)
 
 // Only your own sites may call this API from a browser.
 // Add more (custom domain, preview links) in the ALLOWED_ORIGINS env var, separated by commas.
@@ -98,6 +100,13 @@ async function callGroqWithRetry(params, maxAttempts = 3) {
       return await groq.chat.completions.create(params)
     } catch (err) {
       lastErr = err
+      // JSON mode failed (common with images / long outputs): retry in plain mode,
+      // the client already extracts + repairs JSON from the text.
+      if (params.response_format && /generate JSON|failed_generation|validate JSON/i.test(`${err.message} ${JSON.stringify(err.error || '')}`)) {
+        const { response_format, ...rest } = params
+        params = rest
+        if (attempt < maxAttempts) { console.log('[ai] JSON mode failed, retrying without response_format'); continue }
+      }
       const isRetryable =
         err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 ||
         err.message?.includes('validate JSON') || err.message?.includes('rate_limit')
@@ -166,6 +175,17 @@ function buildConsoleShim(sessionId) {
     '  console.error = function() { send("error", Array.prototype.slice.call(arguments)); origErr.apply(console, arguments); };',
     '  console.warn = function() { send("warn", Array.prototype.slice.call(arguments)); origWarn.apply(console, arguments); };',
     '  window.onerror = function(msg, src, line, col, err) { send("error", [msg + " (line " + line + ")"]) };',
+    '  window.addEventListener("load", function() { setTimeout(function() {',
+    '    try {',
+    '      var b = document.body; var txt = (b && b.innerText || "").trim();',
+    '      var root = document.getElementById("root") || document.getElementById("app");',
+    '      if (root && root.children.length === 0) send("error", ["RENDER CHECK: #" + root.id + " is empty, the app did not render (check the console for the cause)"]);',
+    '      else if (b && !txt && b.querySelectorAll("img,canvas,svg,video,input,button").length === 0) send("error", ["RENDER CHECK: the page is blank (no visible text or elements)"]);',
+    '      var bad = Array.prototype.filter.call(document.images, function(i) { return i.complete && i.naturalWidth === 0 && i.src });',
+    '      if (bad.length) send("warn", ["RENDER CHECK: " + bad.length + " image(s) failed to load, e.g. " + bad[0].src]);',
+    '      send("log", ["RENDER CHECK: ok, " + document.querySelectorAll("*").length + " elements, " + txt.length + " chars of text"]);',
+    '    } catch (e) {}',
+    '  }, 600) });',
     '  window.addEventListener("unhandledrejection", function(e) {',
     '    send("error", ["Unhandled promise rejection: " + (e.reason && e.reason.message || e.reason)])',
     '  });',
@@ -320,6 +340,9 @@ Concise. Use \`code\` for identifiers. Honest if their code is buggy.
 ${language ? `## CURRENT FILE\nLanguage: ${language}` : ''}
 ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${ex ? `\n## PROJECT (file index; contents are NOT shown)\n${ex.index}\n${activeFile ? `Open file: ${activeFile}\n` : ''}${ex.obs ? `\n## COMMAND OUTPUTS SO FAR\n${ex.obs}\n` : ''}${CHAT_SHELL_RULES(ex.lastRound)}` : ''}${behavioralSuffix}`
 
+  const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
+  const webCtx = followUp ? '' : await webBlock(req, String(lastUserMsg?.content || lastUserMsg?.text || '').slice(0, 300)).catch(() => '')
+
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
@@ -338,7 +361,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
     }
     const stream = await callGroqWithRetry({
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
-      messages: [{ role: 'system', content: systemPrompt }, ...chatMessages],
+      messages: [{ role: 'system', content: systemPrompt + (webCtx || '') }, ...chatMessages],
       stream: true,
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
@@ -478,7 +501,8 @@ For React:
   const USER = ex
     ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
     : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
-  conversation.push({ role: 'user', content: withImages(USER, images) })
+  const webCtx = followUp ? '' : await webBlock(req, String(prompt || '').slice(0, 300)).catch(() => '')
+  conversation.push({ role: 'user', content: withImages(USER + webCtx, images) })
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -582,7 +606,8 @@ No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) :
   const USER = ex
     ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
     : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
-  conversation.push({ role: 'user', content: withImages(USER, images) })
+  const webCtx = followUp ? '' : await webBlock(req, String(prompt || '').slice(0, 300)).catch(() => '')
+  conversation.push({ role: 'user', content: withImages(USER + webCtx, images) })
 
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
@@ -1104,6 +1129,11 @@ app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), asy
 // ============================================================
 // HEALTH + USAGE
 // ============================================================
+app.post('/api/search', async (req, res) => {
+  const results = await webSearch(req.body?.query, Math.min(Number(req.body?.maxResults) || 5, 8))
+  res.json({ results })
+})
+
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, hasKey: !!process.env.GROQ_API_KEY })
 })
@@ -1119,4 +1149,10 @@ app.get('/api/usage', async (req, res) => {
 const PORT = process.env.PORT || 3001
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Backend running on port ${PORT}`)
+  // Keep Render's free tier awake (it sleeps after ~15 min without traffic)
+  // Daily cleanup of stale usage rows (keeps the table small)
+  const cleanup = () => supabaseAdmin?.from('stream_usage').delete().lt('updated_at', new Date(Date.now() - 30 * 864e5).toISOString()).then(() => {}, () => {})
+  cleanup(); setInterval(cleanup, 24 * 60 * 60 * 1000)
+  const self = process.env.RENDER_EXTERNAL_URL
+  if (self) setInterval(() => fetch(self + '/api/health').catch(() => {}), 10 * 60 * 1000)
 })

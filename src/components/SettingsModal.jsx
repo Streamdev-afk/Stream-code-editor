@@ -1,6 +1,7 @@
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
+import UsageDropdown from './UsageDropdown'
 
 function Row({ label, hint, children }) {
   return (
@@ -26,7 +27,7 @@ function Toggle({ value, onChange }) {
   )
 }
 
-export default function SettingsModal({ settings, onChange, onClose, onUpgrade }) {
+export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull }) {
   const set = (key, value) => onChange({ ...settings, [key]: value })
 
   return (
@@ -44,6 +45,20 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade }
         </div>
 
         <div className="settings-body">
+
+          {isMobile && (
+            <div className="settings-section">
+              <div className="settings-section-title">Usage</div>
+              <div className="settings-usage">
+                <UsageDropdown onUpgrade={onUpgrade} onManage={onManage} />
+              </div>
+              <div className="settings-section-title" style={{ marginTop: 14 }}>Project sync</div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="topbar-btn" onClick={onPush}>↗ Push to GitHub</button>
+                <button className="topbar-btn" onClick={onPull}>↙ Import from GitHub</button>
+              </div>
+            </div>
+          )}
 
           <div className="settings-section">
             <div className="settings-section-title">Billing</div>

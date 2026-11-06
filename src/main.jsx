@@ -7,6 +7,10 @@ import App from './App.jsx'
 import Landing from './pages/Landing.jsx'
 import Features from './pages/Features.jsx'
 import Pricing from './pages/Pricing.jsx'
+import { API_BASE } from './lib/api'
+
+// wake the free backend as soon as the site opens
+try { fetch(`${API_BASE}/api/health`).catch(() => {}) } catch {}
 
 function ScrollToTop() {
   const { pathname } = useLocation()

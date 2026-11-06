@@ -66,7 +66,8 @@ export const THINKING_MULTIPLIERS = {
 
 function getUserKey(req) {
   if (req.isAuth && req.user?.id) return `user:${req.user.id}`
-  const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim()
+  // req.ip comes from Express 'trust proxy' (the address Render's proxy saw), so a client cannot spoof it
+  const ip = req.ip
     || req.socket?.remoteAddress
     || 'unknown'
   return `ip:${ip}`

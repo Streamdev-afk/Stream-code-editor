@@ -584,11 +584,11 @@ useEffect(() => {
   }
 
   const closeTab = (path) => {
-    setOpenTabs((tabs) => {
-      const next = tabs.filter((t) => t !== path)
-      if (path === activeFile) setActiveFile(next[next.length - 1] || '')
-      return next
-    })
+    const next = openTabs.filter((t) => t !== path)
+    setSessionStore((s) => updateSession(s, s.activeSessionId, {
+      openTabs: next,
+      ...(path === activeFile ? { activeFile: next[next.length - 1] || '' } : {}),
+    }))
   }
 
   const updateActiveContent = (newContent) => {
@@ -1130,7 +1130,7 @@ case 'importZip': setShowImport(true); break
         </div>
 
         {/* View toggle */}
-        <div className="view-toggle">
+        <div className="view-toggle" style={isMobile ? { display: 'none' } : undefined}>
           <button
             className={`view-btn ${viewMode === 'code' ? 'active' : ''}`}
             onClick={() => setViewMode('code')}
@@ -1172,13 +1172,24 @@ case 'importZip': setShowImport(true); break
             </>
           )}
 
+          {isMobile && (
+            <button
+              className={`topbar-btn icon ${viewMode === 'preview' ? 'active' : ''}`}
+              onClick={() => {
+                setMobileView('editor')
+                setViewMode((v) => (v === 'preview' ? 'code' : 'preview'))
+              }}
+              title={viewMode === 'preview' ? 'Stop preview' : 'Run preview'}
+            >{viewMode === 'preview' ? '■' : '▶'}</button>
+          )}
+
           <button
             className="topbar-btn icon"
             onClick={() => setShowSettings(true)}
             title="Settings"
           >⚙</button>
 
-          <UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />
+          {!isMobile && <UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />}
 
           {syncing && (
             <span className="sync-indicator" title="Syncing to cloud...">
@@ -1591,21 +1602,14 @@ case 'importZip': setShowImport(true); break
         <div className="mobile-tabs">
           <button
             className={`mobile-tab ${mobileView === 'files' ? 'active' : ''}`}
-            onClick={() => setMobileView('files')}
+            onClick={() => setMobileView(mobileView === 'files' ? 'editor' : 'files')}
           >
             <span className="mobile-tab-icon">📁</span>
             <span className="mobile-tab-label">Files</span>
           </button>
           <button
-            className={`mobile-tab ${mobileView === 'editor' ? 'active' : ''}`}
-            onClick={() => setMobileView('editor')}
-          >
-            <span className="mobile-tab-icon">📝</span>
-            <span className="mobile-tab-label">Code</span>
-          </button>
-          <button
             className={`mobile-tab ${mobileView === 'ai' ? 'active' : ''}`}
-            onClick={() => setMobileView('ai')}
+            onClick={() => setMobileView(mobileView === 'ai' ? 'editor' : 'ai')}
           >
             <span className="mobile-tab-icon">🤖</span>
             <span className="mobile-tab-label">AI</span>
@@ -1613,7 +1617,7 @@ case 'importZip': setShowImport(true); break
         </div>
       )}
 
-      <div className="statusbar">
+      {!isMobile && <div className="statusbar">
         <div className="status-item">
           <span className={`status-accent ${busy ? 'pulse' : ''}`}>●</span> {status}
         </div>
@@ -1643,7 +1647,7 @@ case 'importZip': setShowImport(true); break
         >
           ↙ Import
         </button>
-      </div>
+      </div>}
 
       {pendingDiff && (
         <DiffModal
@@ -1671,6 +1675,10 @@ case 'importZip': setShowImport(true); break
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
           onUpgrade={handleUpgrade}
+          isMobile={isMobile}
+          onManage={handleManageBilling}
+          onPush={() => { setShowSettings(false); handleGitHubPush() }}
+          onPull={() => { setShowSettings(false); handleGitHubPull() }}
         />
       )}
 
