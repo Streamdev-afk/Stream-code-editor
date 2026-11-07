@@ -1,3 +1,5 @@
+import Icon from './components/Icon'
+import ActionCard from './components/ActionCard'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import Editor from './components/Editor'
 import FileTree from './components/FileTree'
@@ -369,6 +371,23 @@ const [showLogin, setShowLogin] = useState(false)
   const [status, setStatus] = useState('Ready')
   const [pendingDiff, setPendingDiff] = useState(null)
   const [pendingPlan, setPendingPlan] = useState(null)
+  const [ghHint, setGhHint] = useState(null) // AI suggestions for the GitHub window (commit message / repo)
+  const [aiActions, setAiActions] = useState([]) // actions the AI proposed, waiting for the user's OK
+  const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests']
+  const queueAiActions = (list) => {
+    const clean = (Array.isArray(list) ? list : [])
+      .filter((a) => a && ALLOWED_AI_ACTIONS.includes(a.type))
+      .slice(0, 3)
+      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100) }))
+    if (clean.length) setAiActions(clean)
+  }
+  const runAiAction = (a) => {
+    setAiActions((list) => list.filter((x) => x !== a))
+    if (a.type === 'github_push') { setGhHint({ message: a.message }); handleGitHubPush() }
+    else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
+    else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('editor') }
+    else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
+  }
   const [toast, setToast] = useState(null)
   const [inputModal, setInputModal] = useState(null)
 
@@ -1030,19 +1049,19 @@ const handleImportZip = async (zipFile, mode) => {
   // ---------- Command palette ----------
   const commands = [
     { id: 'save',           label: '💾 Save File',            hint: 'Ctrl+S',       action: 'save' },
-    { id: 'find',           label: '🔍 Find in File',         hint: 'Ctrl+F',       action: 'find' },
+    { id: 'find',           label: 'Find in File',         hint: 'Ctrl+F',       action: 'find' },
     { id: 'replace',        label: '🔁 Replace in File',      hint: 'Ctrl+H',       action: 'replace' },
     { id: 'search-all',     label: '🔎 Search All Files',     hint: 'Ctrl+Shift+F', action: 'searchAll' },
-    { id: 'new-file',       label: '📄 New File',             hint: '',             action: 'newFile' },
-    { id: 'new-folder',     label: '📁 New Folder',           hint: '',             action: 'newFolder' },
+    { id: 'new-file',       label: 'New File',             hint: '',             action: 'newFile' },
+    { id: 'new-folder',     label: 'New Folder',           hint: '',             action: 'newFolder' },
     { id: 'toggle-code',    label: '📝 Show Code',            hint: '',             action: 'viewCode' },
-    { id: 'toggle-prev',    label: '▶  Show Preview',         hint: '',             action: 'viewPreview' },
+    { id: 'toggle-prev',    label: 'Show Preview',         hint: '',             action: 'viewPreview' },
     { id: 'ai-complete',    label: '✨ AI: Complete',         hint: '',             action: 'aiComplete' },
     { id: 'ai-fix',         label: '🔧 AI: Fix Bugs',         hint: '',             action: 'aiFix' },
     { id: 'ai-refactor',    label: '♻️ AI: Refactor',          hint: '',             action: 'aiRefactor' },
     { id: 'ai-comment',     label: '💬 AI: Comment',          hint: '',             action: 'aiComment' },
-    { id: 'revert',         label: '↺ Revert Last AI Change', hint: '',             action: 'revert' },
-    { id: 'toggle-sidebar', label: '☰ Toggle Sidebar',        hint: 'Ctrl+B',       action: 'toggleSidebar' },
+    { id: 'revert',         label: 'Revert Last AI Change', hint: '',             action: 'revert' },
+    { id: 'toggle-sidebar', label: 'Toggle Sidebar',        hint: 'Ctrl+B',       action: 'toggleSidebar' },
     { id: 'toggle-ai',      label: '🤖 Toggle AI Panel',      hint: 'Ctrl+I',       action: 'toggleAI' },
     { id: 'toggle-bottom',  label: '▤ Toggle Bottom Panel',   hint: 'Ctrl+J',       action: 'toggleBottom' },
     { id: 'export-zip',     label: '📦 Export as ZIP',        hint: '',             action: 'exportZip' },
@@ -1141,7 +1160,7 @@ case 'importZip': setShowImport(true); break
             className={`view-btn ${viewMode === 'preview' ? 'active' : ''}`}
             onClick={() => setViewMode('preview')}
           >
-            ▶ Preview
+            <Icon name="play" size={11} /> Preview
           </button>
         </div>
 
@@ -1153,21 +1172,21 @@ case 'importZip': setShowImport(true); break
                 onClick={() => setShowSidebar((s) => !s)}
                 title="Toggle sidebar (Ctrl+B)"
               >
-                ☰
+                <Icon name="menu" size={18} />
               </button>
               <button
                 className={`topbar-btn icon ${showAI ? 'active' : ''}`}
                 onClick={() => setShowAI((s) => !s)}
                 title="Toggle AI panel (Ctrl+I)"
               >
-                🤖
+                <Icon name="bot" size={18} />
               </button>
               <button
                 className={`topbar-btn icon ${bottomOpen ? 'active' : ''}`}
                 onClick={() => setBottomOpen(!bottomOpen)}
                 title="Toggle terminal / bottom panel (Ctrl+J)"
               >
-                ▤
+                <Icon name="panel" size={18} />
               </button>
             </>
           )}
@@ -1180,20 +1199,20 @@ case 'importZip': setShowImport(true); break
                 setViewMode((v) => (v === 'preview' ? 'code' : 'preview'))
               }}
               title={viewMode === 'preview' ? 'Stop preview' : 'Run preview'}
-            >{viewMode === 'preview' ? '■' : '▶'}</button>
+            ><Icon name={viewMode === 'preview' ? 'stop' : 'play'} size={15} /></button>
           )}
 
           <button
             className="topbar-btn icon"
             onClick={() => setShowSettings(true)}
             title="Settings"
-          >⚙</button>
+          ><Icon name="settings" size={17} /></button>
 
           {!isMobile && <UsageDropdown onUpgrade={handleUpgrade} onManage={handleManageBilling} />}
 
           {syncing && (
             <span className="sync-indicator" title="Syncing to cloud...">
-              ⟳
+              <Icon name="sync" size={14} className="spin" />
             </span>
           )}
 
@@ -1278,6 +1297,7 @@ case 'importZip': setShowImport(true); break
             }
           }}
           onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
+          onAiActions={queueAiActions}
           onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
           model={settings.model}
           onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
@@ -1307,17 +1327,17 @@ case 'importZip': setShowImport(true); break
             className={`sidebar-tab ${sidebarTab === 'explorer' ? 'active' : ''}`}
             onClick={() => setSidebarTab('explorer')}
             title="Explorer (files)"
-          >📁</button>
+          ><Icon name="folder" size={17} /></button>
           <button
             className={`sidebar-tab ${sidebarTab === 'search' ? 'active' : ''}`}
             onClick={() => setSidebarTab('search')}
             title="Search across files (Ctrl+Shift+F)"
-          >🔍</button>
+          ><Icon name="search" size={17} /></button>
           <button
             className={`sidebar-tab ${sidebarTab === 'history' ? 'active' : ''}`}
             onClick={() => setSidebarTab('history')}
             title="Version history"
-          >🕐</button>
+          ><Icon name="clock" size={17} /></button>
         </div>
         {sidebarTab === 'explorer' && (
           <FileTree
@@ -1394,6 +1414,7 @@ case 'importZip': setShowImport(true); break
           }
         }}
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
+          onAiActions={queueAiActions}
         onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
         model={settings.model}
           onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
@@ -1604,14 +1625,14 @@ case 'importZip': setShowImport(true); break
             className={`mobile-tab ${mobileView === 'files' ? 'active' : ''}`}
             onClick={() => setMobileView(mobileView === 'files' ? 'editor' : 'files')}
           >
-            <span className="mobile-tab-icon">📁</span>
+            <span className="mobile-tab-icon"><Icon name="folder" size={19} /></span>
             <span className="mobile-tab-label">Files</span>
           </button>
           <button
             className={`mobile-tab ${mobileView === 'ai' ? 'active' : ''}`}
             onClick={() => setMobileView(mobileView === 'ai' ? 'editor' : 'ai')}
           >
-            <span className="mobile-tab-icon">🤖</span>
+            <span className="mobile-tab-icon"><Icon name="bot" size={19} /></span>
             <span className="mobile-tab-label">AI</span>
           </button>
         </div>
@@ -1638,14 +1659,14 @@ case 'importZip': setShowImport(true); break
           onClick={handleGitHubPush}
           title="Push project to GitHub"
         >
-          ↗ Push
+          <Icon name="push" size={13} /> Push
         </button>
         <button
           className="status-btn"
           onClick={handleGitHubPull}
           title="Import from GitHub"
         >
-          ↙ Import
+          <Icon name="pull" size={13} /> Import
         </button>
       </div>}
 
@@ -1680,6 +1701,10 @@ case 'importZip': setShowImport(true); break
           onPush={() => { setShowSettings(false); handleGitHubPush() }}
           onPull={() => { setShowSettings(false); handleGitHubPull() }}
         />
+      )}
+
+      {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
+        <ActionCard actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />
       )}
 
       {showImport && (
@@ -1726,7 +1751,8 @@ case 'importZip': setShowImport(true); break
           mode={githubModal}
           files={files}
           sessionTitle={activeSession.title}
-          onClose={() => setGithubModal(null)}
+          hint={ghHint}
+          onClose={() => { setGithubModal(null); setGhHint(null) }}
           onPulled={handlePulledRepo}
         />
       )}

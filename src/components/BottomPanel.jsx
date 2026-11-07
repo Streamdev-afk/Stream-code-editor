@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useEffect, useRef } from 'react'
 import Terminal from './Terminal'
 
@@ -54,14 +55,14 @@ export default function BottomPanel({ open, onClose, consoleMessages, files, onF
             onClick={() => setCleared(true)}
             title="Clear output"
           >
-            🗑 Clear
+            <Icon name="trash" size={13} /> Clear
           </button>
         )}
         <button
           className="bottom-close"
           onClick={onClose}
           title="Close panel"
-        >✕</button>
+        ><Icon name="close" size={14} strokeWidth={2.2} /></button>
       </div>
 
       <div className="bottom-body">

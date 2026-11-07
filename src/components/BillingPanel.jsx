@@ -93,17 +93,17 @@ export default function BillingPanel({ onUpgrade }) {
           <div className="billing-upgrade-grid">
             <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro3x')}>
               <div className="billing-upgrade-name">Pro 3×</div>
-              <div className="billing-upgrade-limits">60 / 5h · 1500 / 2wks</div>
+              <div className="billing-upgrade-limits">150 / day · 1500 / 2wks</div>
               <div className="billing-upgrade-price">₦3,000/mo</div>
             </button>
             <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro5x')}>
               <div className="billing-upgrade-name">Pro 5×</div>
-              <div className="billing-upgrade-limits">100 / 5h · 2500 / 2wks</div>
+              <div className="billing-upgrade-limits">250 / day · 2500 / 2wks</div>
               <div className="billing-upgrade-price">₦5,000/mo</div>
             </button>
             <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro10x')}>
               <div className="billing-upgrade-name">Pro 10×</div>
-              <div className="billing-upgrade-limits">200 / 5h · 5000 / 2wks</div>
+              <div className="billing-upgrade-limits">500 / day · 5000 / 2wks</div>
               <div className="billing-upgrade-price">₦9,000/mo</div>
             </button>
           </div>

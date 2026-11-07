@@ -273,13 +273,14 @@ function exploreContext(body) {
   const obs = (Array.isArray(body.observations) ? body.observations : []).slice(-12)
     .map((o) => `$ ${String(o.cmd).slice(0, 300)}\n${String(o.output).slice(0, 3000)}`)
     .join('\n\n')
-  return { index, obs, lastRound: body.lastRound === true }
+  return { index, obs, lastRound: body.lastRound === true, noShell: body.noShell === true }
 }
 
 const SHELL_RULES = (lastRound) => `
 
 ## READING THE PROJECT WITH THE TERMINAL
 You do NOT get file contents up front, only a file index and the output of commands you ran so far.
+Use the terminal ONLY when you must read existing code that you will change or need to understand. If the task is to create new files, folders or pages (even with an image as reference), or the answer does not need existing code, do NOT run any command: answer with the final JSON straight away.
 To read code, reply with ONLY this JSON (and nothing else):
 {"shell": ["grep -rn \"handleSave\" src", "sed -n '40,90p' src/App.jsx"]}
 Allowed read-only commands: ls, tree, find <text> / find . -name "*.jsx", cat -n <file>, head -n N <file>, tail -n N <file>, sed -n 'A,Bp' <file>, grep -rn [-i] <text> [path], wc -l <file>.
@@ -292,7 +293,7 @@ ${lastRound
 const CHAT_SHELL_RULES = (lastRound) => `
 
 ## READING THE PROJECT WITH THE TERMINAL
-If answering needs code you cannot see, reply with ONLY a shell block (nothing before or after it):
+Only if answering truly needs existing code you cannot see (never for general questions or new code), reply with ONLY a shell block (nothing before or after it):
 <shell>
 grep -rn "handleSave" src
 sed -n '40,90p' src/App.jsx
@@ -302,6 +303,52 @@ Allowed read-only commands: ls, tree, find <text>, find . -name "*.jsx", cat -n 
 ${lastRound
   ? '- THIS IS YOUR LAST TURN: answer now with what you know. Do not request more commands.'
   : '- If the question does not need code, or you already have what you need, just answer normally.'}`
+
+
+// ---------------------------------------------------------------------------
+// Shared quality guide: makes the agent understand requests, follow the project and ship working code
+// ---------------------------------------------------------------------------
+const NO_SHELL_NOTE = `
+
+## PROJECT FILE INDEX
+The list of existing files above is only so you do not clash with their names. This is a CREATION task: do NOT run any command, do NOT read files. Answer directly with the final JSON.`
+
+const shellPart = (ex) => (!ex ? '' : ex.noShell ? NO_SHELL_NOTE : SHELL_RULES(ex.lastRound))
+
+const QUALITY_GUIDE = `
+
+## HOW TO WORK (important)
+UNDERSTAND FIRST
+- Work out what the user really wants, including what they did not say (a "landing page" needs a hero, sections, footer, responsive layout, working links).
+- Do exactly what was asked. If they asked for new files or a new folder, only create them: do not edit, rename or "tidy" other files, and do not read the project.
+- Use the terminal ONLY when the task needs existing code that you must change or understand. Never for creating new files, for general questions, or when an attached image or the message already tells you enough.
+- If the user attached an image, study it carefully: layout, sections, colors, fonts, spacing, icons, border radius, shadows, text. Rebuild that look faithfully with real HTML/CSS. If they say it is only inspiration, keep the style and mood but make it original.
+- If the request is ambiguous, pick the most likely meaning, build it, and mention the assumption in the explanation (one short sentence).
+
+FOLLOW THE PROJECT
+- Match the existing code style, naming, libraries and folder structure. Reuse existing components, CSS variables and helpers. Do not add a library unless it is needed.
+- Never break existing features. When editing, change the smallest part that does the job.
+
+WRITE CODE THAT RUNS THE FIRST TIME
+- Complete, working code. No TODO, no "...", no placeholder functions, no lorem ipsum unless asked.
+- NEVER reference local files that do not exist (images/photo.jpg, logo.png...). For pictures use inline SVG, CSS gradients, emoji, or https://picsum.photos/seed/<word>/600/400 so nothing shows as broken.
+- Every id, class, import, script src and link must match something that exists. Check this before you answer.
+- Make pages responsive (viewport meta, flex/grid, no fixed widths that overflow on phones), accessible (alt text, labels, contrast, semantic tags) and handle empty, loading and error states.
+- Escape JSON correctly: inside "content" strings use \\n for newlines and \\" for quotes.
+- If you are not sure about a library API or version, use the stable well-known form. If LIVE WEB RESULTS are given below, trust them over your memory.
+
+WRITE CLEAN TEXT
+- The fields "explanation", "plan", "title", "summary" and "description" are plain sentences: no markdown, no asterisks, no backticks, no emoji.`
+
+const CHAT_GUIDE = `
+
+## HOW TO ANSWER
+- Understand the real question first, then answer directly. Lead with the answer or the fix, then a short why.
+- Be accurate: if unsure about an API or version, say so instead of guessing. Use the LIVE WEB RESULTS when they are given.
+- Show code when it helps (up to about 40 lines, in a fenced block with the language). Explain what to change and where. For whole features or new files, tell the user to switch to Agent mode.
+- Use light formatting: short paragraphs, bullet lists for steps, **bold** only for key terms. Never leave stray symbols.
+- If the question is unclear, ask ONE short clarifying question.
+- Do NOT use the terminal unless you must read existing code to answer.`
 
 const EDIT_FILE_RULES = `
 - For a change inside an EXISTING file use edit_file: { "type": "edit_file", "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] }.
@@ -332,13 +379,13 @@ app.post('/api/chat', async (req, res) => {
 ## WHAT YOU DO
 - Answer questions about code, explain concepts, help plan.
 - If they ask you to build/change code, say: "Switch to Agent mode — I'll write it into your editor so you can review."
-- Don't dump full files. Short snippets only (2-5 lines).
+- Don't dump whole files, show the relevant part.
 
 ## TONE
-Concise. Use \`code\` for identifiers. Honest if their code is buggy.
+Concise and friendly. Use \`code\` for identifiers. Honest if their code is buggy.
 
 ${language ? `## CURRENT FILE\nLanguage: ${language}` : ''}
-${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${ex ? `\n## PROJECT (file index; contents are NOT shown)\n${ex.index}\n${activeFile ? `Open file: ${activeFile}\n` : ''}${ex.obs ? `\n## COMMAND OUTPUTS SO FAR\n${ex.obs}\n` : ''}${CHAT_SHELL_RULES(ex.lastRound)}` : ''}${behavioralSuffix}`
+${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${ex ? `\n## PROJECT (file index; contents are NOT shown)\n${ex.index}\n${activeFile ? `Open file: ${activeFile}\n` : ''}${ex.obs ? `\n## COMMAND OUTPUTS SO FAR\n${ex.obs}\n` : ''}${ex.noShell ? '' : CHAT_SHELL_RULES(ex.lastRound)}` : ''}${CHAT_GUIDE}${behavioralSuffix}`
 
   const lastUserMsg = [...messages].reverse().find((m) => m.role === 'user')
   const webCtx = followUp ? '' : await webBlock(req, String(lastUserMsg?.content || lastUserMsg?.text || '').slice(0, 300)).catch(() => '')
@@ -471,8 +518,16 @@ You respond with ONLY a JSON object:
     { "type": "write_file",  "path": "src/App.jsx", "content": "..." },
     { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] },
     { "type": "delete_file", "path": "src/Old.jsx" }
-  ]
+  ],
+  "actions": [ { "type": "github_push", "message": "Add pricing page" } ]
 }
+
+"actions" is OPTIONAL. Leave it out unless the user explicitly asked for one of these. The user must approve every action, you can never run them yourself:
+- github_push: the user wants the project saved/pushed to GitHub (opens the push dialog). "message" = a git commit message for what changed (imperative, max 72 characters, plain text)
+- github_import: the user wants to import a GitHub repo (opens the import dialog); optional "repo": "owner/name" (only if the user named it)
+- run_preview: the user wants to see the project running (opens the live preview)
+- run_tests: the user wants the project checked for errors
+Never say you pushed, imported or ran something. Say it is waiting for their approval. If the user only asks for these actions, "operations" can be an empty list.
 
 No markdown, no fences, no prose outside JSON.
 
@@ -492,14 +547,14 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
   const USER = ex
-    ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
+    ? `File index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
     : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
   const webCtx = followUp ? '' : await webBlock(req, String(prompt || '').slice(0, 300)).catch(() => '')
   conversation.push({ role: 'user', content: withImages(USER + webCtx, images) })
@@ -520,7 +575,6 @@ For React:
         ? { reasoning_format: 'hidden' }
         : {
             reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : thinking === 'low' ? 'low' : 'medium',
-            response_format: { type: 'json_object' },
           }),
     })
     let totalChars = 0
@@ -597,14 +651,14 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
     : []
 
   const USER = ex
-    ? `File index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
+    ? `File index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n\n` : ''}User request: ${prompt}`
     : `Project files:\n\n${fileList}\n\n${activeFile ? `User's open file: ${activeFile}\n` : ''}User request: ${prompt}`
   const webCtx = followUp ? '' : await webBlock(req, String(prompt || '').slice(0, 300)).catch(() => '')
   conversation.push({ role: 'user', content: withImages(USER + webCtx, images) })
@@ -620,12 +674,11 @@ No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) :
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: 2500,
+      max_tokens: 4000,
       ...(images.length
         ? { reasoning_format: 'hidden' }
         : {
             reasoning_effort: thinking === 'ultra' || thinking === 'high' ? 'high' : 'medium',
-            response_format: { type: 'json_object' },
           }),
     })
     let totalChars = 0
@@ -733,10 +786,10 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) : ''}${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
 
   const USER = (ex
-    ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown, read what you need with the shell):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
+    ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
     : `Original user request: ${originalPrompt || '(unknown)'}\n\nCurrent project files:\n\n${fileList}\n`)
     + `\n${activeFile ? `User's open file: ${activeFile}\n` : ''}\nExecute step ${step.id} only.`
 
@@ -754,8 +807,7 @@ No markdown. No fences. No prose outside JSON.${ex ? SHELL_RULES(ex.lastRound) :
       ],
       stream: true,
       temperature: 0.2,
-      max_tokens: 3000,
-      response_format: { type: 'json_object' },
+      max_tokens: 6000,
     })
     let totalChars = 0
     for await (const chunk of stream) {
@@ -813,7 +865,6 @@ ${errorList}`
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
       temperature: 0.2,
       max_tokens: 3000,
-      response_format: { type: 'json_object' },
     })
     const raw = completion.choices[0]?.message?.content || '{}'
     let parsed

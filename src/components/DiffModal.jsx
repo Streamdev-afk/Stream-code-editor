@@ -1,3 +1,5 @@
+import Icon from './Icon'
+import { stripMd } from './RichText'
 import { useMemo } from 'react'
 
 function diffLines(a, b) {
@@ -28,13 +30,13 @@ export default function DiffModal({ original, next, onAccept, onReject, label })
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">◆</span>
+            <span className="modal-icon"><Icon name="diamond" size={14} /></span>
             <div>
               <div className="modal-title">ION Qoders suggestion</div>
-              <div className="modal-subtitle">{label || 'Edit'}</div>
+              <div className="modal-subtitle">{stripMd(label) || 'Edit'}</div>
             </div>
           </div>
-          <button className="modal-close" onClick={onReject}>✕</button>
+          <button className="modal-close" onClick={onReject}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="diff-stats">

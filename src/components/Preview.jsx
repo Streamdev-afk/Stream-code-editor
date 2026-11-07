@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useMemo, useRef, useEffect, useState } from 'react'
 import { buildPreview } from '../lib/preview'
 import { API_BASE } from '../lib/api'
@@ -63,14 +64,14 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
           <div className="preview-url-bar">
             <span className="preview-url-text" title={previewUrl}>{previewUrl}</span>
             <button className="topbar-btn small" onClick={copyUrl}>
-              {copied ? '✓ Copied' : '📋 Copy'}
+              {copied ? <><Icon name="check" size={13} /> Copied</> : <><Icon name="copy" size={13} /> Copy</>}
             </button>
             <a
               className="topbar-btn small"
               href={previewUrl}
               target="_blank"
               rel="noreferrer"
-            >↗ Open</a>
+            ><Icon name="external" size={13} /> Open</a>
           </div>
         )}
 
@@ -79,7 +80,7 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
             className="topbar-btn small"
             onClick={() => setKey((k) => k + 1)}
             title="Reload preview"
-          >↻ Reload</button>
+          ><Icon name="refresh" size={13} /> Reload</button>
         </div>
       </div>
 

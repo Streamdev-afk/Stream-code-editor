@@ -33,7 +33,7 @@ export default function Pricing() {
             price="₦0"
             hint="forever"
             features={[
-              '20 requests / 5 hours',
+              '50 requests / day',
               '500 requests / 2 weeks',
               'All AI models',
               'Sessions sync across devices',
@@ -47,7 +47,7 @@ export default function Pricing() {
             price="₦3,000"
             hint="per month"
             features={[
-              '60 requests / 5 hours',
+              '150 requests / day',
               '1,500 requests / 2 weeks',
               'Priority AI speed',
               'Everything in Free',
@@ -60,7 +60,7 @@ export default function Pricing() {
             price="₦5,000"
             hint="per month"
             features={[
-              '100 requests / 5 hours',
+              '250 requests / day',
               '2,500 requests / 2 weeks',
               'Priority AI speed',
               'Everything in Free',
@@ -73,7 +73,7 @@ export default function Pricing() {
             price="₦9,000"
             hint="per month"
             features={[
-              '200 requests / 5 hours',
+              '500 requests / day',
               '5,000 requests / 2 weeks',
               'Priority AI speed',
               'Everything in Free',

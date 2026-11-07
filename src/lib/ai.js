@@ -86,6 +86,21 @@ function trimObservations(obs) {
   while (size() > MAX_OBSERVATION_CHARS && obs.length > 1) obs.shift()
 }
 
+// True when the user only wants NEW files/folders/pages made (not existing code changed).
+// Then the AI must not run terminal commands on the project.
+export function isCreationOnly(text, hasImages = false) {
+  const t = String(text || '').toLowerCase()
+  if (!t.trim()) return false
+  const changes = /\b(fix|change|update|edit|modify|refactor|rename|replace|improve|debug|optimi[sz]e|remove|delete|move|bug|error|broken|not working|doesn'?t work|existing|current|already|in (my|the|this) (code|file|project|app)|(add|insert|put) .{0,40}\b(to|into|in) (the|my|this)\b)/.test(t)
+  if (changes) return false
+  const creates = /\b(create|make|build|generate|design|scaffold|set ?up|write|new)\b/.test(t)
+  const things = /\b(file|folder|directory|page|site|website|landing|component|app|project|template|layout|ui|section|game|form|dashboard|portfolio|navbar|footer)\b/.test(t)
+  if (creates && things) return true
+  // a picture as inspiration with no mention of existing code
+  if (hasImages && /\b(inspir\w*|reference|like this|similar|look like|based on|recreate|copy this|clone)\b/.test(t)) return true
+  return false
+}
+
 async function postStream(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
@@ -129,7 +144,7 @@ async function postStream(path, body, onChunk) {
     }
   }
   if (streamError && !full) throw new Error(streamError)
-  return { full, turn }
+  return { full, turn, streamError }
 }
 
 async function runExplorable(path, args, onChunk, onStatus, kind) {
@@ -137,25 +152,37 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
   const { files, onStatus: argStatus, ...base } = args
   onStatus = onStatus || argStatus
 
-  const parse = (full) => {
+  const parse = (full, streamError) => {
     try {
       return extractJSONLocal(full)
     } catch {
       console.error(`${kind} raw output:`, full)
+      // the server told us why it stopped (rate limit, model error...): show that, not "invalid JSON"
+      if (streamError) throw new Error(streamError)
       throw new Error(
         kind === 'Plan'
-          ? 'Planner returned invalid JSON. Try again or rephrase.'
+          ? 'The planner could not finish. Try again or rephrase.'
           : kind === 'Step'
-            ? 'Step execution returned invalid JSON. Try again or rephrase.'
-            : 'AI returned invalid JSON. Try again or rephrase.'
+            ? 'The step was too long and got cut off. Try again, or ask for one smaller part at a time.'
+            : 'The answer was too long and got cut off. Try again, or ask for one smaller part at a time.'
       )
     }
   }
 
+  // new files only: no terminal reading at all, just give the AI the list of names
+  if (projectChars(files) > SMALL_PROJECT_CHARS && isCreationOnly(base.prompt || base.originalPrompt, (base.images || []).length > 0)) {
+    const { full, streamError } = await postStream(
+      path,
+      { ...base, explore: true, noShell: true, fileIndex: buildIndex(files), observations: [], lastRound: true },
+      onChunk
+    )
+    return parse(full, streamError)
+  }
+
   // small project: send it all, like before
   if (projectChars(files) <= SMALL_PROJECT_CHARS) {
-    const { full } = await postStream(path, { ...base, files }, onChunk)
-    return parse(full)
+    const { full, streamError } = await postStream(path, { ...base, files }, onChunk)
+    return parse(full, streamError)
   }
 
   // bigger project: let the AI read only what it needs
@@ -166,13 +193,13 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
 
   for (let round = 0; round <= MAX_SHELL_ROUNDS; round++) {
     const lastRound = round === MAX_SHELL_ROUNDS
-    const { full, turn: t } = await postStream(
+    const { full, turn: t, streamError } = await postStream(
       path,
       { ...base, explore: true, fileIndex: index, observations, turn, lastRound },
       onChunk
     )
     turn = t || turn
-    const parsed = parse(full)
+    const parsed = parse(full, streamError)
     const cmds = Array.isArray(parsed.shell) ? parsed.shell.filter((c) => typeof c === 'string').slice(0, 4) : []
     if (cmds.length && !lastRound) {
       for (const c of cmds) {

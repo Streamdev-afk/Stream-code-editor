@@ -1,8 +1,10 @@
+import Icon from './Icon'
 import { useState, useEffect } from 'react'
 import { pushToGitHub, pullFromGitHub, listUserRepos } from '../lib/github'
 
-export default function GitHubModal({ mode = 'push', files, sessionTitle, onClose, onPulled }) {
+export default function GitHubModal({ mode = 'push', files, sessionTitle, onClose, onPulled, hint }) {
   const [repoName, setRepoName] = useState('')
+  const [commitMsg, setCommitMsg] = useState(hint?.message || '')
   const [isPrivate, setIsPrivate] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(null)
@@ -27,6 +29,13 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
         try {
           const list = await listUserRepos()
           setRepos(list)
+          // the AI suggested a repo: pre-select it (you still press Import)
+          const want = String(hint?.repo || '').toLowerCase()
+          if (want) {
+            const hit = list.find((r) => r.fullName.toLowerCase() === want || r.name.toLowerCase() === want.split('/').pop())
+            if (hit) setPullTarget({ owner: hit.fullName.split('/')[0], repo: hit.name })
+            setPullSearch(want.split('/').pop())
+          }
         } catch (err) {
           setError(err.message)
           setRepos([])
@@ -44,6 +53,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
         isPrivate,
         files,
         sessionTitle,
+        commitMessage: commitMsg.trim(),
       })
       setSuccess(result)
     } catch (err) {
@@ -80,7 +90,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
       <div className="modal gh-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">◆</span>
+            <span className="modal-icon"><Icon name="diamond" size={14} /></span>
             <div>
               <div className="modal-title">
                 {mode === 'push' ? 'Push to GitHub' : 'Import from GitHub'}
@@ -92,7 +102,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
               </div>
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="gh-modal-body">
@@ -118,6 +128,17 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
                   value={repoName}
                   onChange={(e) => setRepoName(e.target.value)}
                   placeholder="my-project"
+                />
+              </label>
+
+              <label className="gh-field">
+                <span className="gh-field-label">Commit message {hint?.message ? '(suggested by Qoders, edit if you like)' : '(optional)'}</span>
+                <input
+                  className="gh-input"
+                  value={commitMsg}
+                  maxLength={100}
+                  onChange={(e) => setCommitMsg(e.target.value)}
+                  placeholder="What changed?"
                 />
               </label>
 

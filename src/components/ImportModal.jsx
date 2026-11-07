@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef } from 'react'
 
 export default function ImportModal({ currentFileCount, onImport, onCancel }) {
@@ -38,13 +39,13 @@ export default function ImportModal({ currentFileCount, onImport, onCancel }) {
       <div className="modal small" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">📦</span>
+            <span className="modal-icon"><Icon name="pkg" size={18} /></span>
             <div>
               <div className="modal-title">Import project</div>
               <div className="modal-subtitle">Load files from a zip archive</div>
             </div>
           </div>
-          <button className="modal-close" onClick={onCancel}>✕</button>
+          <button className="modal-close" onClick={onCancel}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="modal-body-simple">
@@ -64,7 +65,7 @@ export default function ImportModal({ currentFileCount, onImport, onCancel }) {
             />
             {file ? (
               <>
-                <div className="drop-icon">📦</div>
+                <div className="drop-icon"><Icon name="pkg" size={34} strokeWidth={1.4} /></div>
                 <div className="drop-name">{file.name}</div>
                 <div className="drop-size">
                   {(file.size / 1024).toFixed(1)} KB
@@ -72,7 +73,7 @@ export default function ImportModal({ currentFileCount, onImport, onCancel }) {
               </>
             ) : (
               <>
-                <div className="drop-icon">⬆</div>
+                <div className="drop-icon"><Icon name="upload" size={34} strokeWidth={1.4} /></div>
                 <div className="drop-title">Drop a .zip file here</div>
                 <div className="drop-hint">or click to browse</div>
               </>

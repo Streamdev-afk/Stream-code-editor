@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { AVAILABLE_MODELS } from '../lib/settings'
 
@@ -26,7 +27,7 @@ export default function ModelSwitcher({ value, onChange, disabled, compact = fal
       >
         <span className="model-dot" />
         <span className="switch-label">{current.label}</span>
-        <span className="model-caret">▾</span>
+        <span className="model-caret"><Icon name="chevronDown" size={12} strokeWidth={2.4} /></span>
       </button>
       {open && (
         <div className="model-menu">

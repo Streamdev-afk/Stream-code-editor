@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 
 // The "File" menu in the top bar: save, revert, export and import live here instead of
@@ -26,7 +27,7 @@ export default function ProjectMenu({ canSave, canRevert, onSave, onRevert, onEx
   return (
     <div className="pm-wrap" ref={wrapRef}>
       <button className={`topbar-btn pm-btn ${open ? 'active' : ''}`} onClick={() => setOpen((o) => !o)}>
-        File <span className="pm-caret">▾</span>
+        File <span className="pm-caret"><Icon name="chevronDown" size={12} strokeWidth={2.4} /></span>
       </button>
       {open && (
         <div className="pm-menu">

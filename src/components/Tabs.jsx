@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { getFileIcon } from '../lib/fileIcons'
 
 export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClose, rightSlot }) {
@@ -28,7 +29,7 @@ export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClo
               }}
               title="Close tab"
             >
-              {isDirty ? '●' : '✕'}
+              {isDirty ? <Icon name="dot" size={10} /> : <Icon name="close" size={12} strokeWidth={2.4} />}
             </span>
           </div>
         )

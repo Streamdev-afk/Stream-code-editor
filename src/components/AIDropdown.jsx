@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 
 export default function AIDropdown({ disabled, onAction }) {
@@ -28,7 +29,7 @@ export default function AIDropdown({ disabled, onAction }) {
         onClick={() => setOpen((o) => !o)}
         title="Quick AI actions on the current file"
       >
-        🤖 AI ▾
+        <Icon name="bot" size={14} /> AI <Icon name="chevronDown" size={12} strokeWidth={2.4} />
       </button>
       {open && (
         <div className="ai-menu">

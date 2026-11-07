@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../lib/auth'
 
@@ -70,7 +71,7 @@ export default function UserMenu() {
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
             >
-              <span className="user-menu-item-icon">←</span>
+              <span className="user-menu-item-icon"><Icon name="back" size={15} /></span>
               Back to ION
             </a>
           )}
@@ -82,7 +83,7 @@ export default function UserMenu() {
               rel="noopener noreferrer"
               onClick={() => setOpen(false)}
             >
-              <span className="user-menu-item-icon">⬇</span>
+              <span className="user-menu-item-icon"><Icon name="download" size={15} /></span>
               Get the ION app
             </a>
           )}
@@ -93,7 +94,7 @@ export default function UserMenu() {
               await signOut()
             }}
           >
-            <span className="user-menu-item-icon">↪</span>
+            <span className="user-menu-item-icon"><Icon name="logout" size={15} /></span>
             Sign out
           </div>
         </div>

@@ -38,5 +38,25 @@ export async function apiFetch(url, options = {}) {
     ...(options.headers || {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`
-  return fetch(url, { ...options, headers })
+
+  // The free Render server sleeps and answers the first request with a dropped connection
+  // or a 502/503/504. Wait for it to wake up instead of showing an error.
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+  let lastErr
+  for (let attempt = 0; attempt < 3; attempt++) {
+    if (options.signal?.aborted) break
+    try {
+      const res = await fetch(url, { ...options, headers })
+      if ([502, 503, 504].includes(res.status) && attempt < 2) {
+        await wait(2500 * (attempt + 1))
+        continue
+      }
+      return res
+    } catch (e) {
+      lastErr = e
+      if (e?.name === 'AbortError') throw e
+      if (attempt < 2) await wait(2500 * (attempt + 1))
+    }
+  }
+  throw new Error('Could not reach the server. Check your internet and try again in a moment.')
 }

@@ -1,9 +1,11 @@
+import Icon from './Icon'
+import { stripMd } from './RichText'
 export default function HistoryPanel({ history, onRestore, onClear }) {
   if (history.length === 0) {
     return (
       <div className="history-panel">
         <div className="history-empty">
-          <div className="history-empty-icon">🕐</div>
+          <div className="history-empty-icon"><Icon name="clock" size={30} strokeWidth={1.4} /></div>
           <div className="history-empty-title">No history yet</div>
           <div className="history-empty-hint">
             AI changes and file saves will appear here. Click any entry to restore.
@@ -26,7 +28,7 @@ export default function HistoryPanel({ history, onRestore, onClear }) {
     return d.toLocaleDateString()
   }
 
-  const kindIcon = (kind) => kind === 'manual' ? '💾' : '◆'
+  const kindIcon = (kind) => kind === 'manual' ? <Icon name="save" size={14} /> : <Icon name="diamond" size={11} />
   const kindLabel = (kind) => kind === 'manual' ? 'Manual save' : 'AI change'
 
   return (
@@ -39,7 +41,7 @@ export default function HistoryPanel({ history, onRestore, onClear }) {
             if (confirm('Clear all history? This does not affect your files.')) onClear?.()
           }}
           title="Clear history"
-        >🗑</button>
+        ><Icon name="trash" size={14} /></button>
       </div>
       <div className="history-list">
         {entries.map((entry) => {
@@ -56,7 +58,7 @@ export default function HistoryPanel({ history, onRestore, onClear }) {
             >
               <div className="history-item-head">
                 <span className="history-icon">{kindIcon(entry.kind)}</span>
-                <span className="history-label">{entry.label}</span>
+                <span className="history-label">{stripMd(entry.label)}</span>
               </div>
               <div className="history-item-meta">
                 <span className={`history-kind kind-${entry.kind}`}>{kindLabel(entry.kind)}</span>

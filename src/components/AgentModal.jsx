@@ -1,3 +1,5 @@
+import Icon from './Icon'
+import { stripMd } from './RichText'
 import { useState, useMemo } from 'react'
 import { resolveOp } from '../lib/ops'
 
@@ -64,17 +66,17 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">◆</span>
+            <span className="modal-icon"><Icon name="diamond" size={14} /></span>
             <div>
               <div className="modal-title">
                 ION Qoders wants to make {ops.length} change{ops.length === 1 ? '' : 's'}
               </div>
               {plan.explanation && (
-  <div className="modal-subtitle">{plan.explanation}</div>
+  <div className="modal-subtitle">{stripMd(plan.explanation)}</div>
 )}
             </div>
           </div>
-          <button className="modal-close" onClick={onReject}>✕</button>
+          <button className="modal-close" onClick={onReject}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
          
          {Array.isArray(plan.plan) && plan.plan.length > 0 && (

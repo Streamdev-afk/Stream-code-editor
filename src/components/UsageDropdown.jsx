@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { useAuth } from '../lib/auth'
 import { apiFetch } from '../lib/supabase'
@@ -16,7 +17,7 @@ function formatMs(ms) {
 function TierBadge({ tier, label }) {
   return (
     <span className={`usage-tier usage-tier-${tier}`}>
-      {tier === 'anonymous' ? '👤' : tier === 'free' ? '⭐' : '💎'} {label}
+      <Icon name={tier === 'anonymous' ? 'user' : tier === 'free' ? 'star' : 'gem'} size={13} /> {label}
     </span>
   )
 }
@@ -146,7 +147,7 @@ export default function UsageDropdown({ onUpgrade, onManage }) {
 
           <div className="usage-menu-body">
             <WindowBar
-              label="5-hour window"
+              label="Today (resets midnight UTC)"
               windowData={usage.short}
             />
             <WindowBar
@@ -158,7 +159,7 @@ export default function UsageDropdown({ onUpgrade, onManage }) {
           {usage.tier === 'anonymous' && (
             <div className="usage-menu-cta">
               <div className="usage-cta-text">
-                Sign in to unlock <strong>20 per 5h</strong> and <strong>500 per 2 weeks</strong>
+                Sign in to unlock <strong>50 per day</strong> and <strong>500 per 2 weeks</strong>
               </div>
             </div>
           )}

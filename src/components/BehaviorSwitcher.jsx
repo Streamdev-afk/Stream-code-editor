@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 
 const MODES = [
@@ -33,7 +34,7 @@ export default function BehaviorSwitcher({ value, onChange, disabled, compact = 
       >
         <span className="behavior-icon">{current.icon}</span>
         <span className="switch-label">{current.label}</span>
-        <span className="behavior-caret">▾</span>
+        <span className="behavior-caret"><Icon name="chevronDown" size={12} strokeWidth={2.4} /></span>
       </button>
 
       {open && (

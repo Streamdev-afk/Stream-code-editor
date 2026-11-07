@@ -1,3 +1,5 @@
+import Icon from './Icon'
+import RichText from './RichText'
 import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
 import { streamAgent, planTask } from '../lib/ai'
@@ -5,7 +7,7 @@ import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 import { fileToDataUrl } from '../lib/image'
 import { createShell } from '../lib/shell'
-import { shouldExplore, buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS } from '../lib/ai'
+import { isCreationOnly, shouldExplore, buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS } from '../lib/ai'
 import ModelSwitcher from './ModelSwitcher'
 import ThinkingSwitcher from './ThinkingSwitcher'
 import BehaviorSwitcher from './BehaviorSwitcher'
@@ -32,6 +34,7 @@ export default function AIChat({
   sessionTitle,
   onFirstMessage,
   onApplyPlan,
+  onAiActions,
   onPlanReady,
   model,
   thinking,
@@ -136,6 +139,8 @@ useEffect(() => {
 
       // Bigger projects: the AI is not sent the files. It asks for terminal commands
       // (grep -rn, sed -n ...) and gets back only the lines it needs.
+      // Creating new things never needs the terminal: skip reading entirely
+      const creation = isCreationOnly(text, imgs.length > 0)
       const explore = shouldExplore(files)
       const shell = explore ? createShell(files, '/') : null
       const index = explore ? buildIndex(files) : null
@@ -143,11 +148,11 @@ useEffect(() => {
       let turn = null
 
       for (let round = 0; round <= MAX_SHELL_ROUNDS; round++) {
-        const lastRound = round === MAX_SHELL_ROUNDS
+        const lastRound = creation || round === MAX_SHELL_ROUNDS
         const body = explore
           ? {
               messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs, web: getWeb(),
-              explore: true, fileIndex: index, observations, turn, lastRound,
+              explore: true, noShell: creation, fileIndex: index, observations, turn, lastRound,
             }
           : { messages: apiMessages, code, language, model, thinking, behavior, images: imgs, web: getWeb() }
 
@@ -293,13 +298,20 @@ useEffect(() => {
       )
 
       if (!plan.operations || plan.operations.length === 0) {
+        const hasActions = Array.isArray(plan.actions) && plan.actions.length > 0
         setMessages((m) => {
           const c = [...m]
-          c[c.length - 1] = { role: 'assistant', text: plan.explanation || 'No changes needed.', time: Date.now() }
+          c[c.length - 1] = {
+            role: 'assistant',
+            text: (plan.explanation || 'No changes needed.') + (hasActions ? '\n\nWaiting for your approval below.' : ''),
+            time: Date.now(),
+          }
           return c
         })
+        if (hasActions) onAiActions?.(plan.actions)
         return
       }
+      if (Array.isArray(plan.actions) && plan.actions.length > 0) onAiActions?.(plan.actions)
 
       const planLines = Array.isArray(plan.plan) && plan.plan.length > 0
   ? '\n\n' + plan.plan.map((s, i) => `${i + 1}. ${s}`).join('\n')
@@ -391,7 +403,7 @@ setMessages((m) => {
               }}
               title="Search sessions"
             >
-              🔍
+              <Icon name="search" size={16} />
             </button>
             <button
               className={`aichat-icon-btn ${showSessions ? 'active' : ''}`}
@@ -401,7 +413,7 @@ setMessages((m) => {
               }}
               title={showSessions ? 'Close sessions' : 'Show sessions'}
             >
-              ▢
+              <Icon name="expand" size={15} />
             </button>
           </div>
         </div>
@@ -429,7 +441,7 @@ setMessages((m) => {
               }}
               title="New session"
             >
-              ＋
+              <Icon name="plus" size={17} />
             </button>
           </div>
 
@@ -456,7 +468,7 @@ setMessages((m) => {
               if (filtered.length === 0) {
                 return (
                   <div className="aichat-sessions-empty">
-                    {q ? 'No matches' : 'No sessions yet — click ＋ to create one'}
+                    {q ? 'No matches' : 'No sessions yet — tap + to create one'}
                   </div>
                 )
               }
@@ -479,7 +491,7 @@ setMessages((m) => {
                       setSessionQuery('')
                     }}
                   >
-                    <div className="aichat-session-icon">💬</div>
+                    <div className="aichat-session-icon"><Icon name="chat" size={16} /></div>
                     <div className="aichat-session-body">
                       <div className="aichat-session-name">{s.title || 'Untitled'}</div>
                       <div className="aichat-session-meta">
@@ -514,7 +526,7 @@ setMessages((m) => {
                               setConfirmDelete(s.id)
                             }}
                           >
-                            🗑
+                            <Icon name="trash" size={14} />
                           </button>
                         )}
                       </>
@@ -536,7 +548,7 @@ setMessages((m) => {
           return (
             <div key={i} className={`chat-msg ${isUser ? 'user' : 'assistant'}`}>
               <div className="chat-avatar">
-                {isUser ? '👤' : '◆'}
+                {isUser ? <Icon name="user" size={14} /> : <Icon name="diamond" size={12} />}
               </div>
               <div className="chat-body">
                 <div className="chat-meta">
@@ -551,7 +563,12 @@ setMessages((m) => {
                       <span className="typing-dot" />
                     </span>
                   ) : (
-                    msg.text || (streaming && isLast ? '▍' : '')
+                    isUser || msg._status
+                      ? (msg.text || (streaming && isLast ? '▍' : ''))
+                      : <>
+                          <RichText text={msg.text} />
+                          {streaming && isLast && <span className="rt-caret">▍</span>}
+                        </>
                   )}
                 </div>
                 {msg.imageCount > 0 && (
@@ -575,7 +592,7 @@ setMessages((m) => {
                   title="Remove"
                   onClick={() => setImages((prev) => prev.filter((_, j) => j !== i))}
                 >
-                  ✕
+                  <Icon name="close" size={12} strokeWidth={2.4} />
                 </button>
               </div>
             ))}
@@ -639,7 +656,7 @@ setMessages((m) => {
                 title={webOn ? 'Web search on: Qoders looks things up when needed (click to turn off)' : 'Web search off (click to turn on)'}
                 onClick={() => { setWeb(!webOn); setWebOn(!webOn) }}
                 disabled={streaming}
-              >🌐</button>
+              ><Icon name="globe" size={15} /></button>
               <ModelSwitcher value={model} onChange={onModelChange} disabled={streaming} compact up />
               <ThinkingSwitcher value={thinking} onChange={onThinkingChange} disabled={streaming} compact up />
             </div>
@@ -649,7 +666,7 @@ setMessages((m) => {
               disabled={streaming || (!input.trim() && images.length === 0)}
               title={mode === 'agent' ? 'Plan changes' : 'Send'}
             >
-              {streaming ? '⋯' : mode === 'agent' ? '⚡' : '↑'}
+              {streaming ? <Icon name="dots" size={18} /> : mode === 'agent' ? <Icon name="bolt" size={17} /> : <Icon name="arrowUp" size={18} strokeWidth={2.4} />}
             </button>
           </div>
         </div>

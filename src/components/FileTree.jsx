@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { buildTree } from '../lib/fs'
 import { getFileIcon, getFolderIcon } from '../lib/fileIcons'
@@ -70,7 +71,7 @@ function TreeNode({
           <span className="tree-indent-guide" aria-hidden="true" />
         )}
         <span className="tree-caret">
-          {isFolder ? (open ? '▾' : '▸') : ''}
+          {isFolder ? (open ? <Icon name="chevronDown" size={13} strokeWidth={2.4} /> : <Icon name="chevronRight" size={13} strokeWidth={2.4} />) : ''}
         </span>
         <span className="tree-icon">
           {isFolder ? getFolderIcon(open) : getFileIcon(node.name)}
@@ -98,18 +99,18 @@ function TreeNode({
                 className="tree-hover-btn"
                 onClick={(e) => { e.stopPropagation(); onNewFile?.(node.path) }}
                 title="New file"
-              >＋</button>
+              ><Icon name="filePlus" size={14} /></button>
             )}
             <button
               className="tree-hover-btn"
               onClick={(e) => { e.stopPropagation(); setRenaming(node.path) }}
               title="Rename"
-            >✎</button>
+            ><Icon name="edit" size={14} /></button>
             <button
               className="tree-hover-btn danger"
               onClick={(e) => { e.stopPropagation(); onDelete?.(node.path) }}
               title="Delete"
-            >🗑</button>
+            ><Icon name="trash" size={14} /></button>
           </span>
         )}
       </div>
@@ -123,19 +124,19 @@ function TreeNode({
           {isFolder && (
             <>
               <div className="menu-item" onClick={() => { onNewFile?.(node.path); setMenu(null) }}>
-                <span className="menu-icon">📄</span> New File
+                <span className="menu-icon"><Icon name="filePlus" size={15} /></span> New File
               </div>
               <div className="menu-item" onClick={() => { onNewFolder?.(node.path); setMenu(null) }}>
-                <span className="menu-icon">📁</span> New Folder
+                <span className="menu-icon"><Icon name="folderPlus" size={15} /></span> New Folder
               </div>
               <div className="menu-sep" />
             </>
           )}
           <div className="menu-item" onClick={() => { setRenaming(node.path); setMenu(null) }}>
-            <span className="menu-icon">✎</span> Rename
+            <span className="menu-icon"><Icon name="edit" size={15} /></span> Rename
           </div>
           <div className="menu-item danger" onClick={() => { onDelete?.(node.path); setMenu(null) }}>
-            <span className="menu-icon">🗑</span> Delete
+            <span className="menu-icon"><Icon name="trash" size={15} /></span> Delete
           </div>
         </div>
       )}
@@ -183,19 +184,19 @@ export default function FileTree({
             className="panel-header-btn"
             title="New File"
             onClick={() => onNewFile?.('')}
-          >＋</button>
+          ><Icon name="filePlus" size={17} /></button>
           <button
             className="panel-header-btn"
             title="New Folder"
             onClick={() => onNewFolder?.('')}
-          >📁＋</button>
+          ><Icon name="folderPlus" size={17} /></button>
           <button
             className="panel-header-btn"
             title="Reset files"
             onClick={() => {
               if (confirm('Reset all files to defaults? This wipes your edits.')) onReset?.()
             }}
-          >↺</button>
+          ><Icon name="refresh" size={16} /></button>
         </div>
       </div>
 
@@ -210,10 +211,10 @@ export default function FileTree({
       >
         {tree.length === 0 ? (
           <div className="tree-empty">
-            <div className="tree-empty-icon">📄</div>
+            <div className="tree-empty-icon"><Icon name="file" size={34} strokeWidth={1.4} /></div>
             <div className="tree-empty-title">No files yet</div>
             <div className="tree-empty-hint">
-              Click <strong>＋</strong> above, right-click here, or ask the AI to build something.
+              Click the <strong>new file</strong> button above, right-click here, or ask the AI to build something.
             </div>
           </div>
         ) : (
@@ -241,10 +242,10 @@ export default function FileTree({
             onClick={(e) => e.stopPropagation()}
           >
             <div className="menu-item" onClick={() => { onNewFile?.(''); setRootMenu(null) }}>
-              <span className="menu-icon">📄</span> New File
+              <span className="menu-icon"><Icon name="filePlus" size={15} /></span> New File
             </div>
             <div className="menu-item" onClick={() => { onNewFolder?.(''); setRootMenu(null) }}>
-              <span className="menu-icon">📁</span> New Folder
+              <span className="menu-icon"><Icon name="folderPlus" size={15} /></span> New Folder
             </div>
           </div>
         )}

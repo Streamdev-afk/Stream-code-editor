@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useEffect, useRef } from 'react'
 
 export default function InputModal({ title, defaultValue = '', placeholder, onSubmit, onCancel }) {
@@ -19,7 +20,7 @@ export default function InputModal({ title, defaultValue = '', placeholder, onSu
       <div className="modal small" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title">{title}</div>
-          <button className="modal-close" onClick={onCancel} title="Cancel (Esc)">✕</button>
+          <button className="modal-close" onClick={onCancel} title="Cancel (Esc)"><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
         <div className="modal-body-simple">
           <input

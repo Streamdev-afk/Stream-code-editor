@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
@@ -35,13 +36,13 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
       <div className="modal settings-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">⚙</span>
+            <span className="modal-icon"><Icon name="settings" size={18} /></span>
             <div>
               <div className="modal-title">Settings</div>
               <div className="modal-subtitle">Preferences save automatically</div>
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="settings-body">
@@ -54,8 +55,8 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
               </div>
               <div className="settings-section-title" style={{ marginTop: 14 }}>Project sync</div>
               <div style={{ display: 'flex', gap: 8 }}>
-                <button className="topbar-btn" onClick={onPush}>↗ Push to GitHub</button>
-                <button className="topbar-btn" onClick={onPull}>↙ Import from GitHub</button>
+                <button className="topbar-btn" onClick={onPush}><Icon name="push" size={14} /> Push to GitHub</button>
+                <button className="topbar-btn" onClick={onPull}><Icon name="pull" size={14} /> Import from GitHub</button>
               </div>
             </div>
           )}

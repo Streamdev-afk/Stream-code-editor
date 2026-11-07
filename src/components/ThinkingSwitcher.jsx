@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { THINKING_LEVELS } from '../lib/settings'
 
@@ -26,7 +27,7 @@ export default function ThinkingSwitcher({ value, onChange, disabled, compact = 
       >
         <span className={`thinking-icon thinking-icon-${current.id}`}>◆</span>
         <span className="switch-label">{current.label}</span>
-        <span className="thinking-caret">▾</span>
+        <span className="thinking-caret"><Icon name="chevronDown" size={12} strokeWidth={2.4} /></span>
       </button>
 
       {open && (

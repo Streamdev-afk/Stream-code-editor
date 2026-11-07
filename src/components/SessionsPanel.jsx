@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 
 function SessionRow({ session, isActive, onClick, onRename, onDelete }) {
@@ -60,7 +61,7 @@ function SessionRow({ session, isActive, onClick, onRename, onDelete }) {
         onClick={() => !renaming && onClick(session.id)}
         onContextMenu={handleContext}
       >
-        <div className="session-row-icon">💬</div>
+        <div className="session-row-icon"><Icon name="chat" size={15} /></div>
         <div className="session-row-body">
           {renaming ? (
             <input
@@ -95,7 +96,7 @@ function SessionRow({ session, isActive, onClick, onRename, onDelete }) {
           onClick={(e) => e.stopPropagation()}
         >
           <div className="menu-item" onClick={() => { setRenaming(true); setMenu(null) }}>
-            <span className="menu-icon">✎</span> Rename
+            <span className="menu-icon"><Icon name="edit" size={15} /></span> Rename
           </div>
           <div className="menu-item danger" onClick={() => {
             if (confirm(`Delete "${session.title}"? This removes all its files and chat.`)) {
@@ -103,7 +104,7 @@ function SessionRow({ session, isActive, onClick, onRename, onDelete }) {
             }
             setMenu(null)
           }}>
-            <span className="menu-icon">🗑</span> Delete
+            <span className="menu-icon"><Icon name="trash" size={15} /></span> Delete
           </div>
         </div>
       )}
@@ -121,15 +122,15 @@ export default function SessionsPanel({ sessions, activeSessionId, onSelect, onN
           onClick={onNew}
           title="New chat"
         >
-          ＋
+          <Icon name="plus" size={16} />
         </button>
       </div>
       <div className="sessions-list">
         {sessions.length === 0 ? (
           <div className="sessions-empty">
-            <div className="sessions-empty-icon">💬</div>
+            <div className="sessions-empty-icon"><Icon name="chat" size={30} strokeWidth={1.4} /></div>
             <div className="sessions-empty-title">No chats yet</div>
-            <div className="sessions-empty-hint">Click ＋ to start</div>
+            <div className="sessions-empty-hint">Tap + to start</div>
           </div>
         ) : (
           sessions.map((s) => (

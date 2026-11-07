@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState, useEffect, useMemo, useRef } from 'react'
 
 export default function CommandPalette({ mode, files, activeFile, commands, onSelectFile, onRunCommand, onClose }) {
@@ -93,7 +94,7 @@ export default function CommandPalette({ mode, files, activeFile, commands, onSe
     <div className="cmd-backdrop" onClick={onClose}>
       <div className="cmd-palette" onClick={(e) => e.stopPropagation()}>
         <div className="cmd-header">
-          <span className="cmd-prefix">{mode === 'files' ? '📄' : '⌘'}</span>
+          <span className="cmd-prefix">{mode === 'files' ? <Icon name="file" size={15} /> : <Icon name="command" size={15} />}</span>
           <input
             ref={inputRef}
             className="cmd-input"

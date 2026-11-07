@@ -1,3 +1,4 @@
+import Icon from './Icon'
 import { useState } from 'react'
 import { useAuth } from '../lib/auth'
 
@@ -56,7 +57,7 @@ export default function LoginModal({ onClose }) {
       <div className="modal login-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">◆</span>
+            <span className="modal-icon"><Icon name="diamond" size={14} /></span>
             <div>
               <div className="modal-title">Sign in to ION Qoders</div>
               <div className="modal-subtitle">
@@ -64,7 +65,7 @@ export default function LoginModal({ onClose }) {
               </div>
             </div>
           </div>
-          <button className="modal-close" onClick={onClose}>✕</button>
+          <button className="modal-close" onClick={onClose}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="login-modal-body">

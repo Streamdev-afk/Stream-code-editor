@@ -14,6 +14,11 @@ import {
 // For now this works per-process; restart = tokens lost (users re-paste).
 const userTokens = new Map() // userId -> encrypted token
 
+function cleanCommitMessage(m) {
+  const t = String(m || '').replace(/[\r\n]+/g, ' ').replace(/[*`#]/g, '').trim().slice(0, 100)
+  return t || ''
+}
+
 export default function createGithubRouter({ supabaseAdmin }) {
   const router = express.Router()
 
@@ -160,7 +165,7 @@ export default function createGithubRouter({ supabaseAdmin }) {
         safeRepo,
         branch,
         fileList,
-        `ION Qoders: ${sessionTitle || 'Update'}`
+        cleanCommitMessage(req.body?.commitMessage) || `ION Qoders: ${sessionTitle || 'Update'}`
       )
 
       res.json({

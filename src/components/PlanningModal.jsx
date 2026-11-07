@@ -1,3 +1,5 @@
+import Icon from './Icon'
+import { stripMd } from './RichText'
 import { useState, useEffect } from 'react'
 
 const STATUS = {
@@ -48,15 +50,15 @@ export default function PlanningModal({
       <div className="modal wide planning-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <span className="modal-icon">🧭</span>
+            <span className="modal-icon"><Icon name="compass" size={18} /></span>
             <div>
-              <div className="modal-title">{plan.title || 'Plan'}</div>
+              <div className="modal-title">{stripMd(plan.title) || 'Plan'}</div>
               <div className="modal-subtitle">
-                {plan.summary || 'Review each step before executing'}
+                {stripMd(plan.summary) || 'Review each step before executing'}
               </div>
             </div>
           </div>
-          <button className="modal-close" onClick={onReject} disabled={running}>✕</button>
+          <button className="modal-close" onClick={onReject} disabled={running}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 
         <div className="planning-body">
@@ -88,9 +90,9 @@ export default function PlanningModal({
                     <div className="planning-step-info">
                       <div className="planning-step-title">
                         <span className="planning-step-num">{step.id}</span>
-                        {step.title}
+                        {stripMd(step.title)}
                       </div>
-                      <div className="planning-step-desc">{step.description}</div>
+                      <div className="planning-step-desc">{stripMd(step.description)}</div>
                       {step.files && step.files.length > 0 && (
                         <div className="planning-step-files">
                           {step.files.map((f) => (
@@ -128,7 +130,7 @@ export default function PlanningModal({
             onClick={() => onApprove(editedSteps.filter((s) => s.enabled))}
             disabled={running || enabledCount === 0}
           >
-            <span className="btn-check">▶</span>
+            <span className="btn-check"><Icon name="play" size={11} /></span>
             {running ? 'Running…' : `Execute ${enabledCount} step${enabledCount === 1 ? '' : 's'}`}
           </button>
         </div>

@@ -26,11 +26,11 @@ export async function disconnectGitHub() {
   return data
 }
 
-export async function pushToGitHub({ repoName, isPrivate, files, sessionTitle }) {
+export async function pushToGitHub({ repoName, isPrivate, files, sessionTitle, commitMessage }) {
   const res = await apiFetch(`${API_BASE}/api/github/push`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repoName, isPrivate, files, sessionTitle }),
+    body: JSON.stringify({ repoName, isPrivate, files, sessionTitle, commitMessage }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)

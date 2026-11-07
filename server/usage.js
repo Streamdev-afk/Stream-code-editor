@@ -1,6 +1,6 @@
 /**
  * Usage tracker with two rolling windows.
- *  - Short window: 5 hours
+ *  - Short window: 1 day (resets at midnight UTC, same as the ION app)
  *  - Long window: 2 weeks
  * Both must have room for a request to succeed.
  * Stored in Supabase (table stream_usage) so limits survive server restarts and sleeps.
@@ -20,7 +20,7 @@ const db = SB_URL && SB_SECRET
   ? createClient(SB_URL, SB_SECRET, { auth: { persistSession: false, autoRefreshToken: false } })
   : null
 
-export const SHORT_WINDOW_MS = 5 * 60 * 60 * 1000          // 5 hours
+export const SHORT_WINDOW_MS = 24 * 60 * 60 * 1000          // 1 day, resets at midnight UTC
 export const LONG_WINDOW_MS = 14 * 24 * 60 * 60 * 1000     // 2 weeks
 
 // Per-tier limits — per short window and per long window
@@ -32,22 +32,22 @@ export const TIER_LIMITS = {
   },
   free: {
     label: 'Free',
-    short: 20,
+    short: 50,
     long: 500,
   },
   pro3x: {
     label: 'Pro 3×',
-    short: 60,
+    short: 150,
     long: 1500,
   },
   pro5x: {
     label: 'Pro 5×',
-    short: 100,
+    short: 250,
     long: 2500,
   },
   pro10x: {
     label: 'Pro 10×',
-    short: 200,
+    short: 500,
     long: 5000,
   },
 }
@@ -193,8 +193,8 @@ export async function checkLimit(req, cost = 1) {
     if (shortBlocked) {
       const resetIn = Math.ceil((SHORT_WINDOW_MS - (Date.now() - entry.shortWindowStart)) / (60 * 1000))
       message = tier === 'anonymous'
-        ? `Guest 5-hour limit reached (${limits.short} requests). Sign in for more — resets in ${resetIn} min.`
-        : `5-hour limit reached (${limits.short} requests). ${tier === 'free' ? 'Upgrade for more — ' : ''}resets in ${resetIn} min.`
+        ? `Guest daily limit reached (${limits.short} requests). Sign in for more. Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
+        : `Daily limit reached (${limits.short} requests). ${tier === 'free' ? 'Upgrade for more. ' : ''}Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
     } else {
       const resetIn = Math.ceil((LONG_WINDOW_MS - (Date.now() - entry.longWindowStart)) / (24 * 60 * 60 * 1000))
       message = tier === 'anonymous'
