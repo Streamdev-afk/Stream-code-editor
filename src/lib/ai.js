@@ -101,7 +101,20 @@ export function isCreationOnly(text, hasImages = false) {
   return false
 }
 
-async function postStream(path, body, onChunk) {
+async function postStream(path, body, onChunk, _retried = false) {
+  try {
+    return await postStreamOnce(path, body, onChunk)
+  } catch (e) {
+    // one automatic retry for transient failures that produced no output
+    if (!_retried && /busy|rate limit|formatting|confused|Failed to fetch|NetworkError|network|HTTP 5\d\d|reach the AI/i.test(String(e?.message))) {
+      await new Promise((r) => setTimeout(r, 2500))
+      return postStream(path, body, onChunk, true)
+    }
+    throw e
+  }
+}
+
+async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

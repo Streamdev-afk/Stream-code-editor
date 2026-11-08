@@ -90,16 +90,35 @@ function getBehavioralPrefix(mode) {
   return `\n\n## BEHAVIORAL MODE — ${m.label}\n${m.prefix}\n`
 }
 
+// Turn raw provider errors into messages a user can act on
+function friendlyError(err) {
+  const m = `${err?.message || ''} ${JSON.stringify(err?.error || '')}`
+  if (err?.status === 429 || /rate.?limit/i.test(m)) return 'The AI is busy right now (rate limit). Wait a few seconds and send again, or switch to another model.'
+  if (err?.status === 413 || /too large|context length|reduce the length|max.*tokens/i.test(m)) return 'This request is too big for the model. Try a shorter message, fewer/smaller files, or fewer images.'
+  if (/decommission|model_not_found|does not exist|not supported/i.test(m)) return 'That model is unavailable right now. Pick a different model in the model menu.'
+  if (/tool choice is none|called a tool|tool_use_failed/i.test(m)) return 'The AI got confused and tried a tool. Please send again.'
+  if (/generate JSON|validate JSON|failed_generation/i.test(m)) return 'The AI had trouble formatting its reply. Please send again.'
+  if (err?.status === 401 || /api key|unauthor/i.test(m)) return 'The AI service key is invalid on the server. Check GROQ_API_KEY on Render.'
+  if (/ECONN|ETIMEDOUT|fetch failed|network/i.test(m)) return 'Could not reach the AI service. Please try again.'
+  return err?.message || 'Something went wrong. Please try again.'
+}
+
 // ------------------------------------------------------------
 // Retry wrapper
 // ------------------------------------------------------------
-async function callGroqWithRetry(params, maxAttempts = 3) {
+async function callGroqWithRetry(params, maxAttempts = 4) {
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      return await groq.chat.completions.create(params)
+      { const { __fb, ...p } = params; return await groq.chat.completions.create(p) }
     } catch (err) {
       lastErr = err
+      // Model tried to call a tool while tools are disabled: retry without tools on a fallback model
+      if (/tool choice is none|called a tool|tool_use_failed/i.test(`${err.message} ${JSON.stringify(err.error || '')}`)) {
+        const { tools, tool_choice, ...rest } = params
+        params = { ...rest, model: attempt === 1 ? params.model : 'llama-3.3-70b-versatile' }
+        if (attempt < maxAttempts) { console.log('[ai] tool-choice error, retrying without tools'); continue }
+      }
       // JSON mode failed (common with images / long outputs): retry in plain mode,
       // the client already extracts + repairs JSON from the text.
       if (params.response_format && /generate JSON|failed_generation|validate JSON/i.test(`${err.message} ${JSON.stringify(err.error || '')}`)) {
@@ -110,6 +129,14 @@ async function callGroqWithRetry(params, maxAttempts = 3) {
       const isRetryable =
         err.status === 429 || err.status === 500 || err.status === 502 || err.status === 503 ||
         err.message?.includes('validate JSON') || err.message?.includes('rate_limit')
+      const modelProblem = /decommission|model_not_found|does not exist/i.test(`${err.message}`)
+      if ((modelProblem || (err.status === 429 && attempt >= maxAttempts - 1)) && !params.__fb && !/vision|llama-4|scout|maverick/i.test(params.model || '')) {
+        console.log('[ai] falling back to llama-3.3-70b-versatile')
+        params = { ...params, model: 'llama-3.3-70b-versatile', __fb: true }
+        const { reasoning_format, __fb, ...clean } = params
+        params = { ...clean, __fb: true }
+        continue
+      }
       if (!isRetryable || attempt === maxAttempts) throw err
       const retryAfter = err.headers?.['retry-after']
         ? parseInt(err.headers['retry-after']) * 1000
@@ -316,6 +343,12 @@ The list of existing files above is only so you do not clash with their names. T
 const shellPart = (ex) => (!ex ? '' : ex.noShell ? NO_SHELL_NOTE : SHELL_RULES(ex.lastRound))
 
 const QUALITY_GUIDE = `
+NEVER call tools or functions (no browser, python, search tools). Answer only in the requested text/JSON format; web results, if any, are already provided in the prompt.
+
+
+## SELF-CHECK BEFORE ANSWERING
+- Re-read your output: valid JSON, every file path unique, every import/export/id/class matches, no leftover placeholders, nothing the user did not ask for.
+- If something is impossible or unclear, say so in one sentence instead of guessing silently.
 
 ## HOW TO WORK (important)
 UNDERSTAND FIRST
@@ -425,7 +458,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
     res.end()
   } catch (err) {
     console.error('Chat error:', err)
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: friendlyError(err) })}\n\n`)
     res.end()
   }
 })
@@ -475,7 +508,7 @@ app.post('/api/edit', async (req, res) => {
     res.end()
   } catch (err) {
     console.error('Edit error:', err)
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: friendlyError(err) })}\n\n`)
     res.end()
   }
 })
@@ -588,7 +621,7 @@ For React:
     res.end()
   } catch (err) {
     console.error('Agent error:', err)
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: friendlyError(err) })}\n\n`)
     res.end()
   }
 })
@@ -820,7 +853,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
     res.end()
   } catch (err) {
     console.error('Execute-step error:', err)
-    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`)
+    res.write(`data: ${JSON.stringify({ error: friendlyError(err) })}\n\n`)
     res.end()
   }
 })
@@ -874,7 +907,7 @@ ${errorList}`
     res.json(parsed)
   } catch (err) {
     console.error('Diagnose error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: friendlyError(err) })
   }
 })
 
@@ -1103,7 +1136,7 @@ app.post('/api/paystack/checkout', async (req, res) => {
     res.json({ authorizationUrl, reference, tier })
   } catch (err) {
     console.error('Paystack checkout error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: friendlyError(err) })
   }
 })
 
@@ -1115,7 +1148,7 @@ app.get('/api/subscription', async (req, res) => {
     res.json({ subscription: sub })
   } catch (err) {
     console.error('Get subscription error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: friendlyError(err) })
   }
 })
 
@@ -1134,7 +1167,7 @@ app.post('/api/subscription/cancel', async (req, res) => {
     res.json({ subscription: updated })
   } catch (err) {
     console.error('Cancel subscription error:', err)
-    res.status(500).json({ error: err.message })
+    res.status(500).json({ error: friendlyError(err) })
   }
 })
 
