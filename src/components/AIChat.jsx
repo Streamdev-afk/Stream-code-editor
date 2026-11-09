@@ -182,6 +182,19 @@ useEffect(() => {
         const decoder = new TextDecoder()
         let buffer = ''
         let full = ''
+        // typing pacer: reveals text at a readable speed instead of in big bursts
+        let shown = 0, timer = null
+        const tick = () => {
+          const back = full.length - shown
+          if (back <= 0) return
+          shown += Math.max(1, Math.min(back, Math.ceil(back / 40)))
+          setLast(full.slice(0, shown))
+        }
+        const startPacer = () => { if (!timer) timer = setInterval(tick, 28) }
+        const finishPacer = async () => {
+          while (shown < full.length) { tick(); await new Promise((r) => setTimeout(r, 28)) }
+          clearInterval(timer); timer = null
+        }
 
         while (true) {
           const { done, value } = await reader.read()
@@ -203,11 +216,14 @@ useEffect(() => {
               if (parsed.text) {
                 full += parsed.text
                 // a terminal request is not an answer: show a status instead of the raw command
-                setLast(explore && !lastRound && looksLikeShell(full) ? '🔎 Reading your code…' : full)
+                if (explore && !lastRound && looksLikeShell(full)) { shown = full.length; setLast('🔎 Reading your code…') }
+                else startPacer()
               }
             } catch {}
           }
         }
+
+        if (!(explore && !lastRound && looksLikeShell(full))) await finishPacer(); else { clearInterval(timer); timer = null }
 
         if (explore && !lastRound) {
           const cmds = parseShellRequest(full)

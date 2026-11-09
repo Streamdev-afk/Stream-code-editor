@@ -103,6 +103,24 @@ function friendlyError(err) {
   return err?.message || 'Something went wrong. Please try again.'
 }
 
+// Streams a completion; if the model returns no visible text (reasoning ate the token budget),
+// retries once with low reasoning effort and a bigger budget.
+async function* guardedStream(params) {
+  let got = false
+  const stream = await callGroqWithRetry(params)
+  for await (const chunk of stream) {
+    if (chunk.choices?.[0]?.delta?.content) got = true
+    yield chunk
+  }
+  if (got) return
+  console.log('[ai] empty response, retrying with low reasoning effort')
+  const retry = { ...params, max_tokens: Math.min((params.max_tokens || 4096) + 4000, 16000) }
+  if (!retry.reasoning_format) retry.reasoning_effort = 'low'
+  if (/gpt-oss/.test(retry.model || '') === false) delete retry.reasoning_effort
+  const s2 = await callGroqWithRetry(retry)
+  for await (const chunk of s2) yield chunk
+}
+
 // ------------------------------------------------------------
 // Retry wrapper
 // ------------------------------------------------------------
@@ -439,7 +457,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
         }
       }
     }
-    const stream = await callGroqWithRetry({
+    const stream = guardedStream({
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: systemPrompt + (webCtx || '') }, ...chatMessages],
       stream: true,
@@ -492,7 +510,7 @@ app.post('/api/edit', async (req, res) => {
   res.setHeader('Connection', 'keep-alive')
 
   try {
-    const stream = await callGroqWithRetry({
+    const stream = guardedStream({
       model: model || 'openai/gpt-oss-20b',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userPrompt }],
       stream: true,
@@ -598,7 +616,7 @@ For React:
   if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
-    const stream = await callGroqWithRetry({
+    const stream = guardedStream({
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
@@ -702,7 +720,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
   if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
-    const stream = await callGroqWithRetry({
+    const stream = guardedStream({
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
@@ -832,7 +850,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
   if (ex && !followUp) res.write(`data: ${JSON.stringify({ turn: issueTurn(req) })}\n\n`)
 
   try {
-    const stream = await callGroqWithRetry({
+    const stream = guardedStream({
       model: model || 'openai/gpt-oss-20b',
       messages: [
         { role: 'system', content: SYSTEM },
