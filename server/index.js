@@ -106,19 +106,36 @@ function friendlyError(err) {
 // Streams a completion; if the model returns no visible text (reasoning ate the token budget),
 // retries once with low reasoning effort and a bigger budget.
 async function* guardedStream(params) {
-  let got = false
-  const stream = await callGroqWithRetry(params)
-  for await (const chunk of stream) {
-    if (chunk.choices?.[0]?.delta?.content) got = true
-    yield chunk
+  const TOOL_ERR = /tool choice is none|called a tool|tool_use_failed|tool_call/i
+  const fallback = (p) => {
+    const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = p
+    return { ...rest, model: /vision|llama-4|scout|maverick/i.test(p.model || '') ? p.model : 'llama-3.3-70b-versatile', max_tokens: Math.min(p.max_tokens || 4096, 8000) }
   }
-  if (got) return
-  console.log('[ai] empty response, retrying with low reasoning effort')
-  const retry = { ...params, max_tokens: Math.min((params.max_tokens || 4096) + 4000, 16000) }
-  if (!retry.reasoning_format) retry.reasoning_effort = 'low'
-  if (/gpt-oss/.test(retry.model || '') === false) delete retry.reasoning_effort
-  const s2 = await callGroqWithRetry(retry)
-  for await (const chunk of s2) yield chunk
+  const attempts = [
+    params,
+    { ...params, max_tokens: Math.min((params.max_tokens || 4096) + 4000, 16000), ...(params.reasoning_format ? {} : /gpt-oss/.test(params.model || '') ? { reasoning_effort: 'low' } : {}) },
+    fallback(params),
+  ]
+  let lastErr
+  for (let i = 0; i < attempts.length; i++) {
+    let got = false
+    try {
+      const stream = await callGroqWithRetry(attempts[i])
+      for await (const chunk of stream) {
+        if (chunk.choices?.[0]?.delta?.content) got = true
+        yield chunk
+      }
+      if (got) return
+      console.log(`[ai] empty response (try ${i + 1}), retrying`)
+    } catch (err) {
+      lastErr = err
+      const msg = `${err?.message || ''} ${JSON.stringify(err?.error || '')}`
+      if (got) throw err // text already sent: cannot restart cleanly
+      if (TOOL_ERR.test(msg)) { console.log('[ai] tool error, switching to fallback model'); i = Math.max(i, 1); continue }
+      if (i === attempts.length - 1) throw err
+    }
+  }
+  if (lastErr) throw lastErr
 }
 
 // ------------------------------------------------------------
