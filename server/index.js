@@ -95,7 +95,7 @@ function friendlyError(err) {
   const m = `${err?.message || ''} ${JSON.stringify(err?.error || '')}`
   if (err?.status === 429 || /rate.?limit/i.test(m)) return 'The AI is busy right now (rate limit). Wait a few seconds and send again, or switch to another model.'
   if (err?.status === 413 || /too large|context length|reduce the length|max.*tokens/i.test(m)) return 'This request is too big for the model. Try a shorter message, fewer/smaller files, or fewer images.'
-  if (/decommission|model_not_found|does not exist|not supported/i.test(m)) return 'That model is unavailable right now. Pick a different model in the model menu.'
+  if (/decommission|model_not_found|does not exist|no access/i.test(m)) return 'No AI model could answer right now (' + String(err?.message || '').slice(0, 120) + '). Try another model in the model menu.'
   if (/tool choice is none|called a tool|tool_use_failed/i.test(m)) return 'The AI got confused and tried a tool. Please send again.'
   if (/generate JSON|validate JSON|failed_generation/i.test(m)) return 'The AI had trouble formatting its reply. Please send again.'
   if (err?.status === 401 || /api key|unauthor/i.test(m)) return 'The AI service key is invalid on the server. Check GROQ_API_KEY on Render.'
@@ -105,35 +105,60 @@ function friendlyError(err) {
 
 // Streams a completion; if the model returns no visible text (reasoning ate the token budget),
 // retries once with low reasoning effort and a bigger budget.
+let _modelCache = { at: 0, ids: [] }
+async function availableModels() {
+  if (Date.now() - _modelCache.at < 3600e3 && _modelCache.ids.length) return _modelCache.ids
+  try {
+    const l = await groq.models.list()
+    const ids = (l.data || []).map((m) => m.id).filter((id) => !/whisper|guard|tts|orpheus|embed|prompt|compound|safeguard/i.test(id))
+    if (ids.length) _modelCache = { at: Date.now(), ids }
+  } catch (e) { console.log('[ai] could not list models:', e.message) }
+  return _modelCache.ids
+}
+const PREFERRED = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'llama-3.1-8b-instant']
+async function fallbackModels(exclude) {
+  const ids = await availableModels()
+  const pool = ids.length ? ids : PREFERRED
+  const ordered = [...PREFERRED.filter((m) => pool.includes(m)), ...pool.filter((m) => !PREFERRED.includes(m) && !/vision|scout|maverick/i.test(m))]
+  return ordered.filter((m) => !exclude.has(m))
+}
+
+// Streams a completion with automatic recovery: empty reply, tool-call confusion or an unavailable
+// model move on to the next available model (only possible while no text has been sent yet).
 async function* guardedStream(params) {
-  const TOOL_ERR = /tool choice is none|called a tool|tool_use_failed|tool_call/i
-  const fallback = (p) => {
-    const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = p
-    return { ...rest, model: /vision|llama-4|scout|maverick/i.test(p.model || '') ? p.model : 'llama-3.3-70b-versatile', max_tokens: Math.min(p.max_tokens || 4096, 8000) }
-  }
-  const attempts = [
-    params,
-    { ...params, max_tokens: Math.min((params.max_tokens || 4096) + 4000, 16000), ...(params.reasoning_format ? {} : /gpt-oss/.test(params.model || '') ? { reasoning_effort: 'low' } : {}) },
-    fallback(params),
-  ]
+  const BAD = /tool choice is none|called a tool|tool_use_failed|tool_call|decommission|model_not_found|does not exist|not supported|not available|no access|permission/i
+  const tried = new Set()
+  let cur = params
   let lastErr
-  for (let i = 0; i < attempts.length; i++) {
+  for (let i = 0; i < 5; i++) {
     let got = false
+    tried.add(cur.model)
     try {
-      const stream = await callGroqWithRetry(attempts[i])
+      const stream = await callGroqWithRetry(cur)
       for await (const chunk of stream) {
         if (chunk.choices?.[0]?.delta?.content) got = true
         yield chunk
       }
       if (got) return
-      console.log(`[ai] empty response (try ${i + 1}), retrying`)
+      console.log(`[ai] empty reply from ${cur.model}`)
+      // first empty reply: same model with a bigger budget and low reasoning; after that switch model
+      if (i === 0 && /gpt-oss/.test(cur.model || '') && !cur.reasoning_format) {
+        cur = { ...cur, max_tokens: Math.min((cur.max_tokens || 4096) + 4000, 16000), reasoning_effort: 'low' }
+        continue
+      }
     } catch (err) {
       lastErr = err
+      if (got) throw err
       const msg = `${err?.message || ''} ${JSON.stringify(err?.error || '')}`
-      if (got) throw err // text already sent: cannot restart cleanly
-      if (TOOL_ERR.test(msg)) { console.log('[ai] tool error, switching to fallback model'); i = Math.max(i, 1); continue }
-      if (i === attempts.length - 1) throw err
+      console.log(`[ai] ${cur.model} failed: ${msg.slice(0, 200)}`)
+      if (!BAD.test(msg) && err?.status !== 404 && err?.status !== 400) throw err
     }
+    const next = (await fallbackModels(tried))[0]
+    if (!next) break
+    console.log(`[ai] switching to ${next}`)
+    const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = cur
+    cur = { ...rest, model: next, max_tokens: Math.min(cur.max_tokens || 4096, 8000) }
+    if (/gpt-oss/.test(next)) cur.reasoning_effort = 'low'
   }
   if (lastErr) throw lastErr
 }
