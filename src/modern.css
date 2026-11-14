@@ -878,9 +878,54 @@ html[data-liquid="on"] .toggle-knob { transition: transform .5s var(--spring), l
 html[data-liquid="on"] .toggle:active .toggle-knob { width: 22px; }
 html[data-liquid="on"] .tree-item, html[data-liquid="on"] .file-item { transition: background-color .2s, transform .3s var(--spring); }
 html[data-liquid="on"] :is(.tree-item, .file-item):hover { transform: translateX(3px); }
-html[data-liquid="on"] .chat-input { transition: box-shadow .35s var(--smooth), border-color .25s, transform .35s var(--spring); }
-html[data-liquid="on"] .chat-input:focus-within { transform: translateY(-1px); box-shadow: 0 0 0 3px var(--accent-dim, rgba(16,185,129,.25)), 0 10px 30px rgba(0,0,0,.35); }
 
-@media (prefers-reduced-motion: reduce) {
-  html[data-liquid="on"] * { animation: none !important; transition-duration: .01ms !important; }
+
+
+/* =====================================================================
+   v10: plain text box, working animations, scrollable file tree
+   ===================================================================== */
+/* AI text box: no glow, ring, lift or sheen in any state */
+.chat-composer, .chat-composer:focus-within, .chat-composer:hover,
+.chat-input-wrap, .chat-input-wrap:focus-within,
+.chat-input, .chat-input:focus, .chat-input:focus-within {
+  box-shadow: none !important; transform: none !important; animation: none !important; background-image: none;
 }
+.chat-composer:focus-within { border-color: var(--border-strong) !important; }
+
+/* file tree: always scrolls when there are many files */
+.main > .sidebar-wrap, .main > .editor-pane, .main > .aichat { min-height: 0; }
+.sidebar-wrap { min-height: 0; height: 100%; overflow: hidden; }
+.sidebar-wrap > .filetree, .sidebar-wrap > .search-panel, .sidebar-wrap > .history-panel { flex: 1 1 0; min-height: 0; overflow: hidden; }
+.filetree { min-height: 0; overflow: hidden; }
+.filetree .tree-body { flex: 1 1 0; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.mobile-panel > .filetree { min-height: 0; }
+
+/* motion (on unless you switch it off in settings) */
+@keyframes mo-tab { 0% { opacity: 0; transform: translateY(8px) scale(.92); } 60% { opacity: 1; transform: translateY(-1px) scale(1.02); } 100% { opacity: 1; transform: none; } }
+@keyframes mo-swap { from { opacity: .9; } to { opacity: 0; } }
+@keyframes mo-slide-up { 0% { opacity: 0; transform: translateY(18px); } 60% { opacity: 1; transform: translateY(-2px); } 100% { transform: none; } }
+@keyframes mo-slide-left { 0% { opacity: 0; transform: translateX(-14px); } 60% { opacity: 1; transform: translateX(2px); } 100% { transform: none; } }
+@keyframes mo-slide-right { 0% { opacity: 0; transform: translateX(22px); } 60% { opacity: 1; transform: translateX(-2px); } 100% { transform: none; } }
+@keyframes mo-row { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: none; } }
+@keyframes mo-fade-up { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.editor-pane { position: relative; }
+.editor-flash { position: absolute; inset: 34px 0 0 0; background: #0e1016; pointer-events: none; z-index: 5; opacity: 0; }
+html:not([data-liquid="off"]) .editor-flash { animation: mo-swap .28s ease-out both; }
+
+html:not([data-liquid="off"]) .tab { animation: mo-tab .42s var(--spring) both; transition: transform .3s var(--spring), background-color .2s, color .2s; }
+html:not([data-liquid="off"]) .tab:hover:not(.active) { transform: translateY(-1px); }
+html:not([data-liquid="off"]) .sidebar-wrap { animation: mo-slide-left .45s var(--spring) both; }
+html:not([data-liquid="off"]) .sidebar-wrap > .filetree, html:not([data-liquid="off"]) .sidebar-wrap > .search-panel, html:not([data-liquid="off"]) .sidebar-wrap > .history-panel { animation: mo-fade-up .32s var(--smooth) both; }
+html:not([data-liquid="off"]) .main > .aichat { animation: mo-slide-right .5s var(--spring) both; }
+html:not([data-liquid="off"]) .bottom-panel { animation: mo-slide-up .45s var(--spring) both; }
+html:not([data-liquid="off"]) .preview-wrap, html:not([data-liquid="off"]) .empty-editor { animation: mo-fade-up .35s var(--smooth) both; }
+html:not([data-liquid="off"]) .tree-row { animation: mo-row .22s var(--smooth) both; }
+html:not([data-liquid="off"]) .sidebar-tab { transition: transform .3s var(--spring), color .2s, background-color .2s; }
+html:not([data-liquid="off"]) .sidebar-tab:active { transform: scale(.9); }
+html:not([data-liquid="off"]) .bottom-tab { transition: transform .3s var(--spring), color .2s, background-color .2s; }
+html:not([data-liquid="off"]) .bottom-tab:active { transform: scale(.94); }
+html:not([data-liquid="off"]) .modal-backdrop { animation: liquid-fade .25s var(--smooth) both; }
+html:not([data-liquid="off"]) .modal { animation: liquid-pop .5s var(--spring) both; }
+html:not([data-liquid="off"]) :is(.model-menu, .thinking-menu, .behavior-menu, .user-menu-dropdown, .ai-menu, .usage-menu, .tree-context-menu, .cmd-palette, .aichat-more-menu) { animation: liquid-drop .38s var(--spring) both; transform-origin: top center; }
+html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring) both; }

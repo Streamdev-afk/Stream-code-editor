@@ -1409,6 +1409,7 @@ case 'importZip': setShowImport(true); break
       </div>
     )}
     <div className="editor-pane">
+      <div className="editor-flash" key={`${viewMode}:${activeFile}`} aria-hidden="true" />
       {viewMode === 'code' ? (
         <>
           <Tabs
