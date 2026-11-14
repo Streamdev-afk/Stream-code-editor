@@ -1466,6 +1466,8 @@ case 'importZip': setShowImport(true); break
         thinking={settings.thinking || 'medium'}
         testAfterApply={testAfterApply}
         onTestToggle={setTestAfterApply}
+        team={!!settings.team}
+        onTeamToggle={(v) => setSettings((x) => ({ ...x, team: v }))}
         planningMode={true}
         sessions={sessionStore.sessions}
         activeSessionId={sessionStore.activeSessionId}

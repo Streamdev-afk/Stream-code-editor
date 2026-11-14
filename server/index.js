@@ -741,6 +741,8 @@ Split the work between ${n} workers, so no single worker runs out of context and
 
 app.post('/api/agent/plan', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
+  const team = req.body.team === true
+  const teamSize = Math.min(8, Math.max(2, Number(req.body.teamSize) || 3))
   const images = cleanImages(req.body.images)
   const ex = exploreContext(req.body)
   // later rounds of the same question (terminal reads) are free; the first round is charged
