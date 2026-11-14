@@ -1,6 +1,7 @@
 import { getWeb } from './web'
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
+import { loadActivePersona } from './team'
 import { createShell, runCommand, isReadOnlyCommand } from './shell'
 
 export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
@@ -115,10 +116,11 @@ async function postStream(path, body, onChunk, _retried = false) {
 }
 
 async function postStreamOnce(path, body, onChunk) {
+  const persona = body.persona !== undefined ? body.persona : await loadActivePersona().catch(() => '')
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, web: getWeb() }),
+    body: JSON.stringify({ ...body, persona, web: getWeb() }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
@@ -408,4 +410,80 @@ export async function diagnose({ sessionId, files, activeFile, errors, originalP
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+// ---------------------------------------------------------------
+// Project digest: a compact, cheap overview of EVERY file (no AI call, no terminal).
+// Cached for 30 minutes per project signature so repeated questions cost nothing to build.
+// ---------------------------------------------------------------
+const DIGEST_TTL = 30 * 60 * 1000
+const _digestCache = new Map()
+
+function sig(files) {
+  let h = 0
+  for (const [p, f] of Object.entries(files || {})) {
+    const c = f?.content || ''
+    h = (h * 31 + p.length * 7 + c.length + c.charCodeAt(0) + c.charCodeAt(c.length - 1 || 0)) | 0
+    for (let i = 0; i < c.length; i += 97) h = (h * 33 + c.charCodeAt(i)) | 0
+  }
+  return `${Object.keys(files || {}).length}:${h}`
+}
+
+function outline(path, c) {
+  const ext = (path.split('.').pop() || '').toLowerCase()
+  const lines = c.split('\n')
+  const keep = []
+  const push = (l) => { const t = l.trim(); if (t && keep.length < 24 && !keep.includes(t)) keep.push(t.slice(0, 110)) }
+  if (/^(js|jsx|ts|tsx|mjs)$/.test(ext)) {
+    for (const l of lines) if (/^\s*(import |export |(async )?function |class |const [A-Z]\w* *=|const \w+ *= *(async )?\(|app\.(get|post|use)|router\.)/.test(l)) push(l)
+  } else if (ext === 'css') {
+    for (const l of lines) if (/\{\s*$/.test(l) && !/^\s{2,}/.test(l)) push(l.replace(/\{\s*$/, ''))
+  } else if (/^(html|htm)$/.test(ext)) {
+    for (const l of lines) if (/<(title|h[1-3]|section|header|nav|footer|main|form|script|link|button)\b/i.test(l)) push(l)
+  } else if (ext === 'json') {
+    push(lines.slice(0, 14).join(' '))
+  } else if (ext === 'md') {
+    for (const l of lines) if (/^#{1,3} /.test(l)) push(l)
+  } else {
+    lines.slice(0, 10).forEach(push)
+  }
+  return keep
+}
+
+export function buildDigest(files, activeFile, budget = 12000) {
+  const key = `${sig(files)}|${activeFile || ''}|${budget}`
+  const hit = _digestCache.get(key)
+  if (hit && Date.now() - hit.at < DIGEST_TTL) return hit.text
+  const entries = Object.entries(files || {})
+    .filter(([p]) => !IGNORED.test(p))
+    .sort(([a], [b]) => (a === activeFile ? -1 : b === activeFile ? 1 : a.localeCompare(b)))
+    .slice(0, 80)
+  const per = Math.max(350, Math.floor(budget / Math.max(entries.length, 1)))
+  let out = `Files (${entries.length}):\n` + entries.map(([p, f]) => `- ${p} (${(f?.content || '').split('\n').length} lines)`).join('\n') + '\n'
+  for (const [p, f] of entries) {
+    const c = f?.content || ''
+    const isActive = p === activeFile
+    const lim = isActive ? per * 4 : per
+    let block
+    if (c.length <= lim) block = c
+    else {
+      const o = outline(p, c).join('\n')
+      block = `${c.slice(0, Math.floor(lim * 0.45))}\n… (${c.length - Math.floor(lim * 0.45)} more chars)\nKEY LINES:\n${o}`.slice(0, lim + 600)
+    }
+    const chunk = `\n=== ${p}${isActive ? ' (open in editor)' : ''} ===\n${block}\n`
+    if (out.length + chunk.length > budget * 1.15) { out += `\n(+ more files not shown: ${entries.length - entries.findIndex(([x]) => x === p)} files)\n`; break }
+    out += chunk
+  }
+  if (_digestCache.size > 20) _digestCache.clear()
+  _digestCache.set(key, { at: Date.now(), text: out })
+  return out
+}
+
+// A question ABOUT the project (review, explain, "how does it look") with no request to change anything
+export function isOverviewQuestion(text) {
+  const t = String(text || '').toLowerCase()
+  if (!t.trim()) return false
+  const change = /\b(fix|change|update|edit|modify|refactor|rename|replace|add|remove|delete|move|implement|create|make|build|write|install|push|import|run|set|convert|translate|optimi[sz]e)\b/.test(t)
+  if (change) return false
+  return /\b(look|looks|review|check|explain|understand|overview|summar|how (is|does|do|good)|what (is|does|do|are)|any (error|bug|issue|problem)|opinion|thoughts|feedback|rate|structure|my (file|code|project|app)|this (file|code|project|app))\b/.test(t)
 }

@@ -2,7 +2,9 @@ import Icon from './Icon'
 import RichText from './RichText'
 import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
-import { streamAgent, planTask } from '../lib/ai'
+import { streamAgent, planTask, buildDigest, isOverviewQuestion } from '../lib/ai'
+import TeamPanel from './TeamPanel'
+import { getTeamMembers, loadActivePersona } from '../lib/team'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 import { fileToDataUrl } from '../lib/image'
@@ -44,6 +46,8 @@ export default function AIChat({
   onBehaviorChange,
   testAfterApply,
   onTestToggle,
+  team,
+  onTeamToggle,
   planningMode = true,
   sessions,
   activeSessionId,
@@ -57,6 +61,7 @@ export default function AIChat({
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
+  const [showTeam, setShowTeam] = useState(false)
   const [images, setImages] = useState([]) // data URLs waiting to be sent (max 2)
   const [dragOver, setDragOver] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -133,6 +138,7 @@ useEffect(() => {
       })
 
     try {
+      const persona = await loadActivePersona().catch(() => '')
       const apiMessages = newMessages
         .filter((m) => !(m.role === 'assistant' && /^Hey! I'm (Stream|Qoders)/.test(m.text)))
         .map((m) => ({ role: m.role, content: m.text }))
@@ -141,7 +147,10 @@ useEffect(() => {
       // (grep -rn, sed -n ...) and gets back only the lines it needs.
       // Creating new things never needs the terminal: skip reading entirely
       const creation = isCreationOnly(text, imgs.length > 0)
-      const explore = shouldExplore(files)
+      // "how does it look?": read EVERY file through a cached digest, no terminal needed
+      const overview = !creation && isOverviewQuestion(text) && Object.keys(files || {}).length > 0
+      const digest = overview ? buildDigest(files, activeFile) : ''
+      const explore = shouldExplore(files) && !overview
       const shell = explore ? createShell(files, '/') : null
       const index = explore ? buildIndex(files) : null
       const observations = []
@@ -151,10 +160,10 @@ useEffect(() => {
         const lastRound = creation || round === MAX_SHELL_ROUNDS
         const body = explore
           ? {
-              messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs, web: getWeb(),
+              messages: apiMessages, language, activeFile, model, thinking, behavior, images: imgs, web: getWeb(), persona,
               explore: true, noShell: creation, fileIndex: index, observations, turn, lastRound,
             }
-          : { messages: apiMessages, code, language, model, thinking, behavior, images: imgs, web: getWeb() }
+          : { messages: apiMessages, code, language, model, thinking, behavior, activeFile, images: imgs, web: getWeb(), persona, ...(digest ? { digest } : {}) }
 
         const controller = new AbortController()
         const timeoutId = setTimeout(() => controller.abort(), 60000)
@@ -269,7 +278,7 @@ useEffect(() => {
       // If planning mode is on, plan first
       if (planningMode && onPlanReady) {
         const planResult = await planTask(
-  { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, onStatus: showReading },
+  { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, team: !!team, teamSize: getTeamMembers().length, onStatus: showReading },
           (_chunk, full) => {
             let hint = 'Analyzing project…'
             if (full.length > 200) hint = 'Drafting plan…'
@@ -443,8 +452,16 @@ setMessages((m) => {
             <span>Test after applying</span>
           </label>
         )}
+        <button className="test-toggle team-open" type="button" onClick={() => setShowTeam(true)} title="Choose team members and ION characters">Team &amp; characters</button>
+        {mode === 'agent' && (
+          <label className="test-toggle" title="Team: 3 AI workers split the job and build at the same time, so nothing runs out of context and it finishes faster">
+            <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
+            <span>Team ({getTeamMembers().length} AIs)</span>
+          </label>
+        )}
       </div>
 
+      {showTeam && <TeamPanel onClose={() => setShowTeam(false)} />}
             {showSessions && (
         <div className="aichat-sessions-overlay">
           <div className="aichat-sessions-header">

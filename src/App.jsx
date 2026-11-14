@@ -30,6 +30,9 @@ import HistoryPanel from './components/HistoryPanel'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
+import { loadTeam } from './lib/team'
+import LinkPanel from './components/LinkPanel'
+import { pendingActions, markAction, countLinks } from './lib/links'
 import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
@@ -266,6 +269,9 @@ const [paletteMode, setPaletteMode] = useState(null) // null | 'files' | 'comman
 const [pendingGotoLine, setPendingGotoLine] = useState(null) // { path, line }
 const [settings, setSettings] = useState(() => loadSettings())
 const [showSettings, setShowSettings] = useState(false)
+  const [showLink, setShowLink] = useState(false)
+  const [linkActions, setLinkActions] = useState([]) // proposals from a connected ION character
+  const [hasLinks, setHasLinks] = useState(false)
 const [showImport, setShowImport] = useState(false)
 const [previewSession, setPreviewSession] = useState(null)
 const [testAfterApply, setTestAfterApply] = useState(false)
@@ -823,7 +829,40 @@ const saveActive = () => {
   ])
 }
 
+  // ---- proposals from a connected ION character (session link) ----
+  useEffect(() => {
+    if (!user) return
+    countLinks().then((n) => setHasLinks(n > 0)).catch(() => {})
+  }, [user])
+  useEffect(() => {
+    if (!user || !hasLinks) return
+    let stop = false
+    const tick = async () => {
+      if (document.hidden) return
+      try {
+        const rows = await pendingActions(activeSession.id)
+        if (!stop) setLinkActions(rows.map((r) => ({ id: r.id, type: r.type, path: r.payload?.path, message: r.note || r.payload?.message, repo: r.payload?.repo, payload: r.payload, fromIon: true })))
+      } catch { /* ignore */ }
+    }
+    tick()
+    const t = setInterval(tick, 6000)
+    return () => { stop = true; clearInterval(t) }
+  }, [user, hasLinks, activeSession.id])
+
+  const decideLinkAction = (a, ok) => {
+    setLinkActions((l) => l.filter((x) => x.id !== a.id))
+    if (!ok) { markAction(a.id, 'rejected').catch(() => {}); return }
+    if (['write_file', 'edit_file', 'delete_file'].includes(a.type)) {
+      const op = { type: a.type, path: a.path, content: a.payload?.content, edits: a.payload?.edits }
+      setPendingPlan({ plan: { explanation: a.message || 'Change from an ION character', operations: [op] }, originalPrompt: '', linkActionId: a.id })
+    } else {
+      markAction(a.id, 'approved').catch(() => {})
+      runAiAction({ type: a.type, message: a.message, repo: a.repo })
+    }
+  }
+
  const applyPlan = (chosenOps, explanation, originalPrompt) => {
+  if (pendingPlan?.linkActionId) markAction(pendingPlan.linkActionId, 'approved').catch(() => {})
   const before = Object.fromEntries(
     chosenOps.map((op) => [op.path, files[op.path]?.content ?? null])
   )
@@ -1307,6 +1346,8 @@ case 'importZip': setShowImport(true); break
           behavior={settings.behavior || 'friendly'}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
+        team={!!settings.team}
+        onTeamToggle={(v) => setSettings((x) => ({ ...x, team: v }))}
           planningMode={true}
           sessions={sessionStore.sessions}
           activeSessionId={sessionStore.activeSessionId}
@@ -1458,9 +1499,18 @@ case 'importZip': setShowImport(true); break
           // Fresh local state of files
           let currentFiles = { ...files }
 
+          const teamOn = !!settings.team
+          const LANE_MODELS = [settings.model, 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'openai/gpt-oss-20b']
+          const team = teamOn ? await loadTeam().catch(() => []) : []
+          const N = Math.max(team.length, 2)
+          const lanes = teamOn
+            ? Array.from({ length: N }, (_, k) => steps.filter((st) => (((Number(st.lane) || 1) - 1) % N) === k))
+            : [steps]
+          const runLane = async (steps, laneNo) => {
+          const member = team[laneNo]
           for (let i = 0; i < steps.length; i++) {
             const step = steps[i]
-            setPlanningCurrentStep(i)
+            if (!teamOn) setPlanningCurrentStep(i)
             setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'running' }))
             setPlanningStepLogs((s) => ({ ...s, [step.id]: `Running: ${step.title}…` }))
 
@@ -1482,7 +1532,13 @@ case 'importZip': setShowImport(true); break
                     allSteps: steps,
                     files: currentFiles,
                     activeFile,
-                    model: settings.model,
+                    model: teamOn ? (LANE_MODELS[laneNo] || settings.model) : settings.model,
+                    team: teamOn,
+                    teamSize: team.length || 3,
+                    lane: laneNo + 1,
+                    persona: member?.persona || '',
+                    workerName: member?.name,
+                    contract: pendingPlanning.plan?.contract,
                     thinking: settings.thinking || 'medium',
                     originalPrompt: pendingPlanning.originalPrompt,
                     behavior: settings.behavior || 'friendly',
@@ -1583,6 +1639,8 @@ case 'importZip': setShowImport(true); break
               break
             }
           }
+          }
+          await Promise.all(lanes.map((l, n) => (l.length ? runLane(l, n) : null)))
 
           setPlanningRunning(false)
           setPlanningCurrentStep(-1)
@@ -1686,7 +1744,7 @@ case 'importZip': setShowImport(true); break
           files={files}
           originalPrompt={pendingPlan.originalPrompt}
           onAccept={applyPlan}
-          onReject={() => setPendingPlan(null)}
+          onReject={() => { if (pendingPlan?.linkActionId) markAction(pendingPlan.linkActionId, 'rejected').catch(() => {}); setPendingPlan(null) }}
         />
       )}
 
@@ -1700,11 +1758,25 @@ case 'importZip': setShowImport(true); break
           onManage={handleManageBilling}
           onPush={() => { setShowSettings(false); handleGitHubPush() }}
           onPull={() => { setShowSettings(false); handleGitHubPull() }}
+          onLink={() => { setShowSettings(false); setShowLink(true) }}
         />
       )}
 
       {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
         <ActionCard actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />
+      )}
+
+      {linkActions.length > 0 && !pendingPlan && !pendingPlanning && aiActions.length === 0 && (
+        <ActionCard actions={linkActions} onApprove={(a) => decideLinkAction(a, true)} onDismiss={(a) => decideLinkAction(a, false)} />
+      )}
+
+      {showLink && (
+        <LinkPanel
+          sessionId={activeSession.id}
+          sessionTitle={activeSession.title}
+          onClose={() => setShowLink(false)}
+          onChanged={() => countLinks().then((n) => setHasLinks(n > 0)).catch(() => {})}
+        />
       )}
 
       {showImport && (

@@ -1,4 +1,4 @@
-import { useRef, useImperativeHandle, forwardRef } from 'react'
+import { useRef, useEffect, useImperativeHandle, forwardRef } from 'react'
 import MonacoEditor, { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import '../lib/monacoWorkers.js'
@@ -23,6 +23,28 @@ const Editor = forwardRef(function Editor(
 ) {
   const editorRef = useRef(null)
   const monacoRef = useRef(null)
+  const formattedRef = useRef('')
+
+  // AI sometimes returns code crammed onto a few very long lines: tidy it with Monaco's formatter
+  useEffect(() => {
+    const text = code || ''
+    if (text.length < 120) return
+    const lines = text.split('\n')
+    const longest = Math.max(...lines.map((l) => l.length))
+    const cramped = lines.length <= 4 || (longest > 220 && text.length / lines.length > 90)
+    if (!cramped) return
+    const key = `${language}:${text.length}:${text.slice(0, 60)}`
+    if (formattedRef.current === key) return
+    formattedRef.current = key
+    const t = setTimeout(async () => {
+      try {
+        const ed = editorRef.current
+        if (!ed) return
+        await ed.getAction('editor.action.formatDocument')?.run()
+      } catch {}
+    }, 500)
+    return () => clearTimeout(t)
+  }, [code, language])
 
   useImperativeHandle(ref, () => ({
     getValue: () => editorRef.current?.getValue() ?? '',

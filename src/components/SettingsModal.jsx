@@ -28,7 +28,7 @@ function Toggle({ value, onChange }) {
   )
 }
 
-export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull }) {
+export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull, onLink }) {
   const set = (key, value) => onChange({ ...settings, [key]: value })
 
   return (
@@ -60,6 +60,12 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
               </div>
             </div>
           )}
+
+          <div className="settings-section">
+            <div className="settings-section-title">ION characters</div>
+            <p className="settings-row-hint" style={{ margin: '0 0 10px' }}>Let a coding character from the ION app work on this project. Changes always wait for your approval.</p>
+            <button className="topbar-btn" onClick={onLink}><Icon name="globe" size={14} /> Connect an AI</button>
+          </div>
 
           <div className="settings-section">
             <div className="settings-section-title">Billing</div>

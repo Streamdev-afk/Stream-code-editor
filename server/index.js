@@ -23,6 +23,27 @@ import createGithubRouter from './githubRoutes.js'
 import { webSearch, webBlock } from './websearch.js'
 
 const app = express()
+
+// Keep the server alive: a bug in one request must never crash the process (Render would drop the
+// connection, which the browser reports as a CORS error / "could not reach the server").
+process.on('unhandledRejection', (e) => console.error('[unhandledRejection]', e))
+process.on('uncaughtException', (e) => console.error('[uncaughtException]', e))
+for (const verb of ['post', 'get', 'put', 'delete']) {
+  const orig = app[verb].bind(app)
+  app[verb] = (...args) => {
+    if (verb === 'get' && args.length === 1) return orig(...args)
+    return orig(...args.map((h) => typeof h !== 'function' ? h : async (req, res, next) => {
+      try { await h(req, res, next) } catch (e) {
+        console.error(`[route ${req.method} ${req.path}]`, e)
+        const msg = typeof friendlyError === 'function' ? friendlyError(e) : (e?.message || 'Server error')
+        try {
+          if (!res.headersSent) res.status(500).json({ error: msg })
+          else { res.write(`data: ${JSON.stringify({ error: msg })}\n\n`); res.end() }
+        } catch {}
+      }
+    }))
+  }
+}
 app.set('trust proxy', 1)
 
 // Only your own sites may call this API from a browser.
@@ -116,8 +137,12 @@ async function availableModels() {
   return _modelCache.ids
 }
 const PREFERRED = ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'llama-3.1-8b-instant']
-async function fallbackModels(exclude) {
+async function fallbackModels(exclude, vision = false) {
   const ids = await availableModels()
+  if (vision) {
+    const v = ids.filter((m) => /scout|maverick|vision|-vl|qwen/i.test(m) && !exclude.has(m))
+    return v.sort((a, b) => (/llama-4/.test(b) ? 1 : 0) - (/llama-4/.test(a) ? 1 : 0))
+  }
   const pool = ids.length ? ids : PREFERRED
   const ordered = [...PREFERRED.filter((m) => pool.includes(m)), ...pool.filter((m) => !PREFERRED.includes(m) && !/vision|scout|maverick/i.test(m))]
   return ordered.filter((m) => !exclude.has(m))
@@ -128,6 +153,7 @@ async function fallbackModels(exclude) {
 async function* guardedStream(params) {
   const BAD = /tool choice is none|called a tool|tool_use_failed|tool_call|decommission|model_not_found|does not exist|not supported|not available|no access|permission/i
   const tried = new Set()
+  if (!/gpt-oss/.test(params.model || '') && params.reasoning_effort) { const { reasoning_effort, ...r } = params; params = r }
   let cur = params
   let lastErr
   for (let i = 0; i < 5; i++) {
@@ -153,7 +179,16 @@ async function* guardedStream(params) {
       console.log(`[ai] ${cur.model} failed: ${msg.slice(0, 200)}`)
       if (!BAD.test(msg) && err?.status !== 404 && err?.status !== 400) throw err
     }
-    const next = (await fallbackModels(tried))[0]
+    const hasImg = JSON.stringify(cur.messages || '').includes('"image_url"')
+    let next = (await fallbackModels(tried, hasImg))[0]
+    if (!next && hasImg) {
+      // no vision model left: answer from the text alone rather than failing
+      console.log('[ai] no vision model available, dropping images')
+      cur = { ...cur, messages: cur.messages.map((m) => Array.isArray(m.content)
+        ? { ...m, content: m.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n') + '\n\n(The user attached an image but it could not be processed. Tell them briefly that the image could not be read and ask them to describe it.)' }
+        : m) }
+      next = (await fallbackModels(tried, false))[0]
+    }
     if (!next) break
     console.log(`[ai] switching to ${next}`)
     const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = cur
@@ -423,7 +458,7 @@ FOLLOW THE PROJECT
 - Never break existing features. When editing, change the smallest part that does the job.
 
 WRITE CODE THAT RUNS THE FIRST TIME
-- Complete, working code. No TODO, no "...", no placeholder functions, no lorem ipsum unless asked.
+- FORMAT code like a human developer: one statement or property per line, 2-space indentation, every HTML tag/CSS rule/JS block on its own lines, blank line between sections. NEVER minify or put code on one line.\n- Complete, working code. No TODO, no "...", no placeholder functions, no lorem ipsum unless asked.
 - NEVER reference local files that do not exist (images/photo.jpg, logo.png...). For pictures use inline SVG, CSS gradients, emoji, or https://picsum.photos/seed/<word>/600/400 so nothing shows as broken.
 - Every id, class, import, script src and link must match something that exists. Check this before you answer.
 - Make pages responsive (viewport meta, flex/grid, no fixed widths that overflow on phones), accessible (alt text, labels, contrast, semantic tags) and handle empty, loading and error states.
@@ -452,6 +487,8 @@ app.post('/api/chat', async (req, res) => {
   const { messages, code, language, model, thinking, behavior, activeFile } = req.body
   const images = cleanImages(req.body.images)
   const ex = exploreContext(req.body)
+  // overview questions ("how does it look?"): the client sends a compact digest of EVERY file, so no terminal is needed
+  const digest = typeof req.body.digest === 'string' ? req.body.digest.slice(0, 14000) : ''
   // terminal-read follow-ups of the same question are free; the first round is charged
   const followUp = !!ex && useTurn(req, req.body.turn)
   const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium) + (images.length ? 1 : 0)
@@ -461,7 +498,7 @@ app.post('/api/chat', async (req, res) => {
   }
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
-  const behavioralSuffix = getBehavioralPrefix(behavior)
+  const behavioralSuffix = getBehavioralPrefix(behavior) + personaBlock(req.body.persona)
   // Sending a whole big file with every message burns tokens: cap it
   const MAX_CHAT_CODE = 6000
   const codeForPrompt = code && code.length > MAX_CHAT_CODE
@@ -501,7 +538,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
     }
     const stream = guardedStream({
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
-      messages: [{ role: 'system', content: systemPrompt + (webCtx || '') }, ...chatMessages],
+      messages: [{ role: 'system', content: systemPrompt + (digest ? `\n\n## PROJECT OVERVIEW (a digest of every file you have access to: structure, key lines and the start of each file)\nAnswer from this. Do not claim you cannot see the files. If you need exact lines of one file, say which file and ask the user to request that specific change.\n${digest}\n` : '') + (webCtx || '') }, ...chatMessages],
       stream: true,
       temperature: 0.6,
       max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
@@ -575,6 +612,8 @@ app.post('/api/edit', async (req, res) => {
 
 app.post('/api/agent', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
+  const team = req.body.team === true
+  const teamSize = Math.min(8, Math.max(2, Number(req.body.teamSize) || 3))
   const images = cleanImages(req.body.images)
   const ex = exploreContext(req.body)
   // later rounds of the same question (terminal reads) are free; the first round is charged
@@ -592,8 +631,8 @@ app.post('/api/agent', async (req, res) => {
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
     .map(([p, f]) => {
-      const content = (f.content || '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
+      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
+      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
       return `--- ${p} ---\n${content}${truncated}`
     })
     .join('\n\n')
@@ -640,7 +679,7 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -686,6 +725,20 @@ For React:
   }
 })
 
+// A character from the ION app lends its voice to the answer text. It never changes the code or the JSON format.
+function personaBlock(persona) {
+  const t = typeof persona === 'string' ? persona.trim().slice(0, 2500) : ''
+  if (!t) return ''
+  return `\n\n## YOUR CHARACTER (voice only)\n${t}\nSpeak in this character's voice and remember the user as described. This changes ONLY how you talk in text replies and in the short "explanation"/"summary" fields. Code quality, JSON structure and all other rules stay exactly the same. Never let the character stop you from doing the coding job well.`
+}
+
+const teamPlanRules = (n) => `## TEAM MODE (${n} AI workers build in parallel)
+Split the work between ${n} workers, so no single worker runs out of context and the whole job is faster.
+- Add "lane": a number from 1 to ${n} to every step. Each lane is run in order by its own worker, and all lanes run at the same time.
+- Suggested split: lane 1 = structure/HTML/layout/config, lane 2 = styling/CSS/assets, lane 3 = logic/JS/data, more lanes = extra features/pages/modules. Adapt to the project, keep every file in exactly one lane and make lanes as independent as possible. Do not leave a lane empty if there is enough work.
+- Add a top-level "contract": a short plain text (max 12 lines) listing the shared names all workers must use: ids, class names, file names, function names, data shapes. Workers cannot see each other's files while building, so the contract is how they stay consistent.
+- Use ${Math.max(3, n)} to ${n * 3} steps total, and use at least 2 lanes when the task has 2+ files.`
+
 app.post('/api/agent/plan', async (req, res) => {
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
   const images = cleanImages(req.body.images)
@@ -705,8 +758,8 @@ app.post('/api/agent/plan', async (req, res) => {
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
     .map(([p, f]) => {
-      const content = (f.content || '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
+      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
+      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
       return `--- ${p} ---\n${content}${truncated}`
     })
     .join('\n\n')
@@ -722,10 +775,13 @@ Respond with ONLY a JSON object:
   "title": "Short title",
   "summary": "1-2 sentence overview",
   "estimatedFiles": 5,
+  "contract": "(team mode only) shared ids, classes, file and function names",
   "steps": [
-    { "id": 1, "title": "Create index.html", "description": "One sentence", "files": ["index.html"] }
+    { "id": 1, "title": "Create index.html", "description": "One sentence", "files": ["index.html"], "lane": 1 }
   ]
 }
+
+${team ? teamPlanRules(teamSize) : ''}
 
 ## RULES
 - 3-8 steps. Each step produces 1-3 files.
@@ -744,7 +800,7 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -803,6 +859,9 @@ app.post('/api/agent/test', async (req, res) => {
 
 app.post('/api/agent/execute-step', async (req, res) => {
   const { step, plan, allSteps, files, activeFile, model, thinking, originalPrompt, behavior } = req.body
+  const teamNote = req.body.team === true
+    ? `\n\n## TEAM MODE\nYou are worker ${Number(req.body.lane) || 1} of ${Math.min(8, Number(req.body.teamSize) || 3)} building in parallel. Other workers write the other files at the same time and you cannot see them. Use EXACTLY the shared names from this contract (ids, classes, files, functions):\n${String(req.body.contract || plan?.contract || '(none)').slice(0, 1500)}\nWrite only your own files.`
+    : ''
   const ex = exploreContext(req.body)
   const followUp = !!ex && useTurn(req, req.body.turn)
   const thinkingCost = followUp ? 0 : (THINKING_MULTIPLIERS[thinking] || THINKING_MULTIPLIERS.medium)
@@ -822,8 +881,8 @@ app.post('/api/agent/execute-step', async (req, res) => {
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
     .map(([p, f]) => {
-      const content = (f.content || '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f.content || '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
+      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
+      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
       return `--- ${p} ---\n${content}${truncated}`
     })
     .join('\n\n')
@@ -844,7 +903,7 @@ Description: ${step.description}
 Files to produce: ${(step.files || []).join(', ')}
 
 ## YOUR JOB
-Execute ONLY this step. Produce the files listed.
+Execute ONLY this step. Produce the files listed.${teamNote}
 
 Respond with ONLY a JSON object:
 
@@ -879,7 +938,7 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
 
   const USER = (ex
     ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
@@ -928,7 +987,7 @@ app.post('/api/agent/diagnose', async (req, res) => {
 
   const fileList = Object.entries(files || {})
     .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.log'))
-    .map(([p, f]) => `--- ${p} ---\n${(f.content || '').slice(0, 2000)}`)
+    .map(([p, f]) => `--- ${p} ---\n${(f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, 2000)}`)
     .join('\n\n')
     .slice(0, 5000)
 
