@@ -598,6 +598,7 @@ useEffect(() => {
 useEffect(() => {
   saveSettings(settings)
   applyTheme(settings.theme)
+  try { document.documentElement.dataset.liquid = settings.liquid === false || settings.reduceMotion ? 'off' : 'on' } catch { /* ignore */ }
 }, [settings])
 
   // ---------- File ops ----------
@@ -1759,6 +1760,8 @@ case 'importZip': setShowImport(true); break
           onPush={() => { setShowSettings(false); handleGitHubPush() }}
           onPull={() => { setShowSettings(false); handleGitHubPull() }}
           onLink={() => { setShowSettings(false); setShowLink(true) }}
+          testAfterApply={testAfterApply}
+          onTestToggle={setTestAfterApply}
         />
       )}
 

@@ -28,7 +28,7 @@ const Editor = forwardRef(function Editor(
   // AI sometimes returns code crammed onto a few very long lines: tidy it with Monaco's formatter
   useEffect(() => {
     const text = code || ''
-    if (text.length < 120) return
+    if (settings?.autoFormat === false || text.length < 120) return
     const lines = text.split('\n')
     const longest = Math.max(...lines.map((l) => l.length))
     const cramped = lines.length <= 4 || (longest > 220 && text.length / lines.length > 90)
@@ -44,7 +44,7 @@ const Editor = forwardRef(function Editor(
       } catch {}
     }, 500)
     return () => clearTimeout(t)
-  }, [code, language])
+  }, [code, language, settings?.autoFormat])
 
   useImperativeHandle(ref, () => ({
     getValue: () => editorRef.current?.getValue() ?? '',
@@ -217,7 +217,13 @@ const Editor = forwardRef(function Editor(
         padding: { top: 16, bottom: 16 },
         renderLineHighlight: 'line',
         roundedSelection: true,
-        guides: { indentation: true, bracketPairs: false },
+        guides: { indentation: settings?.indentGuides !== false, bracketPairs: false },
+        bracketPairColorization: { enabled: settings?.bracketColors !== false },
+        formatOnPaste: settings?.formatOnPaste === true,
+        autoClosingBrackets: settings?.autoClose === false ? 'never' : 'languageDefined',
+        autoClosingQuotes: settings?.autoClose === false ? 'never' : 'languageDefined',
+        renderWhitespace: settings?.whitespace || 'none',
+        cursorStyle: settings?.cursorStyle || 'line',
         lineNumbers: settings?.lineNumbers === false ? 'off' : 'on',
         lineNumbersMinChars: 3,
         automaticLayout: true,

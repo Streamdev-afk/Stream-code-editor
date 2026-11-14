@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react'
 import { streamAgent, planTask, buildDigest, isOverviewQuestion } from '../lib/ai'
 import TeamPanel from './TeamPanel'
 import { getTeamMembers, loadActivePersona } from '../lib/team'
+import { loadSettings } from '../lib/settings'
 import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 import { fileToDataUrl } from '../lib/image'
@@ -62,6 +63,7 @@ export default function AIChat({
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
   const [showTeam, setShowTeam] = useState(false)
+  const [showMore, setShowMore] = useState(false)
   const [images, setImages] = useState([]) // data URLs waiting to be sent (max 2)
   const [dragOver, setDragOver] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(null)
@@ -196,12 +198,13 @@ useEffect(() => {
         const tick = () => {
           const back = full.length - shown
           if (back <= 0) return
-          shown += Math.max(1, Math.min(back, Math.ceil(back / 40)))
+          shown += Math.max(1, Math.min(back, Math.ceil(back / SPEED.div)))
           setLast(full.slice(0, shown))
         }
-        const startPacer = () => { if (!timer) timer = setInterval(tick, 28) }
+        const SPEED = ({ slow: { div: 90, ms: 36 }, fast: { div: 25, ms: 22 } })[loadSettings().typingSpeed] || { div: 55, ms: 30 }
+        const startPacer = () => { if (!timer) timer = setInterval(tick, SPEED.ms) }
         const finishPacer = async () => {
-          while (shown < full.length) { tick(); await new Promise((r) => setTimeout(r, 28)) }
+          while (shown < full.length) { tick(); await new Promise((r) => setTimeout(r, SPEED.ms)) }
           clearInterval(timer); timer = null
         }
 
@@ -419,6 +422,38 @@ setMessages((m) => {
             </button>
           </div>
           <div className="aichat-header-actions">
+            <div className="aichat-more-wrap">
+              <button className={`aichat-icon-btn ${showMore ? 'active' : ''}`} onClick={() => setShowMore((v) => !v)} title="More options">
+                <Icon name="dots" size={16} />
+              </button>
+              {showMore && (
+                <>
+                  <div className="aichat-more-shade" onClick={() => setShowMore(false)} />
+                  <div className="aichat-more-menu">
+                    {mode === 'agent' && (
+                      <label className="more-row">
+                        <span>Test after applying</span>
+                        <input type="checkbox" checked={!!testAfterApply} onChange={(e) => onTestToggle?.(e.target.checked)} />
+                      </label>
+                    )}
+                    {mode === 'agent' && (
+                      <label className="more-row">
+                        <span>Team ({getTeamMembers().length} AIs)</span>
+                        <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
+                      </label>
+                    )}
+                    <label className="more-row">
+                      <span>Web search</span>
+                      <input type="checkbox" checked={webOn} onChange={() => { setWeb(!webOn); setWebOn(!webOn) }} />
+                    </label>
+                    <button className="more-row more-link" type="button" onClick={() => { setShowMore(false); setShowTeam(true) }}>
+                      <span>Team &amp; characters…</span>
+                      <Icon name="chevronRight" size={13} />
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <BehaviorSwitcher value={behavior} onChange={onBehaviorChange} disabled={streaming} compact />
             <button
               className={`aichat-icon-btn ${showSearch ? 'active' : ''}`}
@@ -442,23 +477,6 @@ setMessages((m) => {
             </button>
           </div>
         </div>
-        {mode === 'agent' && (
-          <label className="test-toggle" title="After applying changes, let Qoders open the preview, watch for errors, and auto-fix them">
-            <input
-              type="checkbox"
-              checked={!!testAfterApply}
-              onChange={(e) => onTestToggle?.(e.target.checked)}
-            />
-            <span>Test after applying</span>
-          </label>
-        )}
-        <button className="test-toggle team-open" type="button" onClick={() => setShowTeam(true)} title="Choose team members and ION characters">Team &amp; characters</button>
-        {mode === 'agent' && (
-          <label className="test-toggle" title="Team: 3 AI workers split the job and build at the same time, so nothing runs out of context and it finishes faster">
-            <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
-            <span>Team ({getTeamMembers().length} AIs)</span>
-          </label>
-        )}
       </div>
 
       {showTeam && <TeamPanel onClose={() => setShowTeam(false)} />}

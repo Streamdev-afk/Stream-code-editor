@@ -785,3 +785,102 @@ body::before {
 .team-open { margin-left: 6px; }
 .link-code { flex: 1; font-size: 12.5px; letter-spacing: .3px; overflow: hidden; text-overflow: ellipsis; user-select: all; }
 .action-row.from-ion .action-text span { opacity: .85; }
+
+/* =====================================================================
+   v9: smaller mode switch, "more" menu, connect button, LIQUID GLASS motion
+   ===================================================================== */
+:root { --spring: cubic-bezier(.34, 1.56, .64, 1); --smooth: cubic-bezier(.22, 1, .36, 1); }
+
+/* Chat / Agent switch: smaller so the header row fits */
+.mode-btn { padding: 4px 10px !important; font-size: 12px !important; gap: 5px; }
+.mode-switch { padding: 2px !important; }
+.aichat-header-actions { gap: 4px; }
+
+/* three-dots menu */
+.aichat-more-wrap { position: relative; }
+.aichat-more-shade { position: fixed; inset: 0; z-index: 90; }
+.aichat-more-menu {
+  position: absolute; right: 0; top: calc(100% + 8px); z-index: 91; min-width: 230px; padding: 6px;
+  border-radius: 14px; border: 1px solid rgba(255,255,255,.12);
+  background: rgba(24, 26, 34, .82); backdrop-filter: blur(22px) saturate(1.7); -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.16), 0 18px 48px rgba(0,0,0,.5);
+  transform-origin: top right;
+}
+.more-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px; width: 100%;
+  padding: 9px 10px; border-radius: 10px; font: inherit; font-size: 13px; color: inherit; background: transparent; border: 0; cursor: pointer; text-align: left;
+}
+.more-row:hover { background: rgba(255,255,255,.07); }
+.more-row input { accent-color: var(--accent, #10b981); width: 16px; height: 16px; cursor: pointer; }
+.more-link { color: var(--accent, #10b981); }
+
+/* "Connect an AI" button in settings: icon beside the text, slimmer */
+.settings-section .topbar-btn {
+  display: inline-flex !important; flex-direction: row !important; align-items: center; justify-content: center;
+  gap: 8px; width: auto; height: 32px !important; min-height: 0 !important; padding: 0 14px !important; white-space: nowrap; line-height: 1;
+}
+.settings-section .topbar-btn svg { flex: none; }
+
+/* ---------- liquid glass ---------- */
+@keyframes liquid-pop {
+  0%   { opacity: 0; transform: translateY(22px) scale(.92); filter: blur(8px); }
+  55%  { opacity: 1; transform: translateY(-4px) scale(1.012); filter: blur(0); }
+  78%  { transform: translateY(1px) scale(.998); }
+  100% { opacity: 1; transform: none; filter: none; }
+}
+@keyframes liquid-drop {
+  0%   { opacity: 0; transform: translateY(-8px) scale(.9, .72); }
+  55%  { opacity: 1; transform: translateY(1px) scale(1.02, 1.04); }
+  100% { opacity: 1; transform: none; }
+}
+@keyframes liquid-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes liquid-in-right { 0% { opacity: 0; transform: translateX(28px) scale(.97); } 60% { opacity: 1; transform: translateX(-4px); } 100% { transform: none; } }
+@keyframes liquid-msg { 0% { opacity: 0; transform: translateY(10px) scale(.97); } 60% { transform: translateY(-2px) scale(1.005); } 100% { opacity: 1; transform: none; } }
+@keyframes liquid-active { 0% { transform: scale(.9, .8); } 55% { transform: scale(1.06, 1.08); } 100% { transform: none; } }
+@keyframes liquid-sheen { from { background-position: 130% 0; } to { background-position: -30% 0; } }
+
+html[data-liquid="on"] .modal-backdrop { animation: liquid-fade .25s var(--smooth) both; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+html[data-liquid="on"] .modal {
+  animation: liquid-pop .55s var(--spring) both;
+  border: 1px solid rgba(255,255,255,.12);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.14), 0 28px 80px rgba(0,0,0,.55);
+}
+html[data-liquid="on"] :is(.model-menu, .thinking-menu, .behavior-menu, .user-menu-dropdown, .ai-menu, .usage-menu, .tree-context-menu, .cmd-palette) {
+  animation: liquid-drop .42s var(--spring) both;
+  transform-origin: top center;
+  backdrop-filter: blur(20px) saturate(1.6); -webkit-backdrop-filter: blur(20px) saturate(1.6);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.12), 0 16px 44px rgba(0,0,0,.5);
+}
+html[data-liquid="on"] .aichat-more-menu { animation: liquid-drop .42s var(--spring) both; }
+html[data-liquid="on"] .aichat-sessions-overlay { animation: liquid-in-right .5s var(--spring) both; }
+html[data-liquid="on"] .chat-msg { animation: liquid-msg .45s var(--spring) both; }
+html[data-liquid="on"] .action-card, html[data-liquid="on"] .team-member, html[data-liquid="on"] .team-char { animation: liquid-pop .5s var(--spring) both; }
+
+/* buttons: spring hover, squish on press, glass sheen sweep */
+html[data-liquid="on"] :is(.topbar-btn, .mode-btn, .aichat-icon-btn, .seg-btn, .composer-icon, .team-add, .team-mini, .view-btn, .chat-send, .settings-step, .more-row) {
+  transition: transform .38s var(--spring), background-color .25s var(--smooth), box-shadow .3s var(--smooth), border-color .25s var(--smooth), color .2s;
+  will-change: transform;
+}
+html[data-liquid="on"] :is(.topbar-btn, .team-add, .team-mini, .seg-btn, .chat-send):hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.04);
+  background-image: linear-gradient(115deg, transparent 30%, rgba(255,255,255,.16) 50%, transparent 70%);
+  background-size: 260% 100%; animation: liquid-sheen .7s var(--smooth) both;
+}
+html[data-liquid="on"] :is(.topbar-btn, .mode-btn, .aichat-icon-btn, .seg-btn, .composer-icon, .team-add, .team-mini, .view-btn, .chat-send, .settings-step):active:not(:disabled) {
+  transform: scale(.93, .88); transition-duration: .12s;
+}
+html[data-liquid="on"] :is(.mode-btn.active, .view-btn.active, .seg-btn.active, .tab.active) { animation: liquid-active .5s var(--spring) both; }
+html[data-liquid="on"] .tab { transition: transform .35s var(--spring), background-color .25s var(--smooth), color .2s; }
+html[data-liquid="on"] .tab:hover:not(.active) { transform: translateY(-1px); }
+html[data-liquid="on"] .tab:active { transform: scale(.96, .92); transition-duration: .1s; }
+html[data-liquid="on"] .toggle { transition: background-color .3s var(--smooth), box-shadow .3s; }
+html[data-liquid="on"] .toggle-knob { transition: transform .5s var(--spring), left .5s var(--spring), width .25s var(--spring); }
+html[data-liquid="on"] .toggle:active .toggle-knob { width: 22px; }
+html[data-liquid="on"] .tree-item, html[data-liquid="on"] .file-item { transition: background-color .2s, transform .3s var(--spring); }
+html[data-liquid="on"] :is(.tree-item, .file-item):hover { transform: translateX(3px); }
+html[data-liquid="on"] .chat-input { transition: box-shadow .35s var(--smooth), border-color .25s, transform .35s var(--spring); }
+html[data-liquid="on"] .chat-input:focus-within { transform: translateY(-1px); box-shadow: 0 0 0 3px var(--accent-dim, rgba(16,185,129,.25)), 0 10px 30px rgba(0,0,0,.35); }
+
+@media (prefers-reduced-motion: reduce) {
+  html[data-liquid="on"] * { animation: none !important; transition-duration: .01ms !important; }
+}

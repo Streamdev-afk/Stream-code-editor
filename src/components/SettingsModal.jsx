@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import Icon from './Icon'
+import { getWeb, setWeb } from '../lib/web'
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
@@ -28,8 +30,16 @@ function Toggle({ value, onChange }) {
   )
 }
 
-export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull, onLink }) {
+export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull, onLink, testAfterApply, onTestToggle }) {
   const set = (key, value) => onChange({ ...settings, [key]: value })
+  const [web, setWebState] = useState(getWeb())
+  const seg = (key, opts) => (
+    <div className="settings-segment">
+      {opts.map(([v, label]) => (
+        <button key={v} className={`seg-btn ${(settings[key] ?? opts[0][0]) === v ? 'active' : ''}`} onClick={() => set(key, v)}>{label}</button>
+      ))}
+    </div>
+  )
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -82,6 +92,26 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
           </div>
 
           <div className="settings-section">
+            <div className="settings-section-title">AI assistant</div>
+
+            <Row label="Web search" hint="Let the AI look things up when a question needs it">
+              <Toggle value={web} onChange={(v) => { setWeb(v); setWebState(v) }} />
+            </Row>
+            <Row label="Test after applying" hint="Agent opens the preview after changes and fixes errors">
+              <Toggle value={!!testAfterApply} onChange={(v) => onTestToggle?.(v)} />
+            </Row>
+            <Row label="Team mode" hint="Several AIs build different parts at the same time">
+              <Toggle value={!!settings.team} onChange={(v) => set('team', v)} />
+            </Row>
+            <Row label="Reply typing speed" hint="How fast the AI text appears in chat">
+              {seg('typingSpeed', [['slow', 'Slow'], ['normal', 'Normal'], ['fast', 'Fast']])}
+            </Row>
+            <Row label="Tidy cramped code" hint="Auto-format code the AI wrote on one long line">
+              <Toggle value={settings.autoFormat !== false} onChange={(v) => set('autoFormat', v)} />
+            </Row>
+          </div>
+
+          <div className="settings-section">
             <div className="settings-section-title">Editor</div>
 
             <Row label="Font size" hint="Applies to the code editor">
@@ -129,6 +159,25 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <Row label="Smooth scrolling">
               <Toggle value={settings.smoothScrolling} onChange={(v) => set('smoothScrolling', v)} />
             </Row>
+
+            <Row label="Auto-close brackets" hint="Type ( and get ( )">
+              <Toggle value={settings.autoClose !== false} onChange={(v) => set('autoClose', v)} />
+            </Row>
+            <Row label="Colored brackets">
+              <Toggle value={settings.bracketColors !== false} onChange={(v) => set('bracketColors', v)} />
+            </Row>
+            <Row label="Indent guides">
+              <Toggle value={settings.indentGuides !== false} onChange={(v) => set('indentGuides', v)} />
+            </Row>
+            <Row label="Format on paste">
+              <Toggle value={!!settings.formatOnPaste} onChange={(v) => set('formatOnPaste', v)} />
+            </Row>
+            <Row label="Cursor style">
+              {seg('cursorStyle', [['line', 'Line'], ['block', 'Block'], ['underline', 'Underline']])}
+            </Row>
+            <Row label="Show whitespace">
+              {seg('whitespace', [['none', 'Off'], ['boundary', 'Edges'], ['all', 'All']])}
+            </Row>
           </div>
 
           <div className="settings-section">
@@ -153,6 +202,9 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
               </div>
             </Row>
 
+            <Row label="Liquid glass motion" hint="Springy morphs, bounce and glass shine">
+              <Toggle value={settings.liquid !== false} onChange={(v) => set('liquid', v)} />
+            </Row>
             <Row label="Reduce motion" hint="Disable animations">
               <Toggle value={settings.reduceMotion} onChange={(v) => set('reduceMotion', v)} />
             </Row>

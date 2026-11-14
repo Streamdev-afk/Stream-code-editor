@@ -12,6 +12,16 @@ export const DEFAULT_SETTINGS = {
   autoSaveDelay: 800,   // ms
   theme: 'emerald',     // 'emerald' | 'blue' | 'purple' | 'orange'
   reduceMotion: false,
+  liquid: true,            // liquid-glass motion (springy morphs, bounce)
+  typingSpeed: 'normal',   // AI reply typing: slow | normal | fast
+  autoFormat: true,        // tidy code the AI wrote on one long line
+  formatOnPaste: false,
+  autoClose: true,         // auto-close brackets and quotes
+  bracketColors: true,
+  indentGuides: true,
+  cursorStyle: 'line',     // line | block | underline
+  whitespace: 'none',      // none | boundary | all
+  team: false,
      model: 'openai/gpt-oss-20b',
   thinking: 'medium',
   behavior: 'friendly',
