@@ -299,7 +299,7 @@ useEffect(() => {
           const c = [...m]
           c[c.length - 1] = {
             role: 'assistant',
-            text: `🧭 Planned ${stepCount} step${stepCount === 1 ? '' : 's'}: ${planResult.title || planResult.summary || ''}\n\nReview the plan and click Execute when ready.`,
+            text: `Here is my plan${planResult.title ? ` for "${planResult.title}"` : ''}. Nothing has been changed yet.\n\n${(planResult.steps || []).map((st, i) => `${i + 1}. ${st.title}${st.description ? ': ' + st.description : ''}`).join('\n')}\n\nCheck the steps in the window and press Execute when you are happy, or edit them first.`,
             time: Date.now(),
           }
           return c
@@ -344,7 +344,7 @@ useEffect(() => {
       const planLines = Array.isArray(plan.plan) && plan.plan.length > 0
   ? '\n\n' + plan.plan.map((s, i) => `${i + 1}. ${s}`).join('\n')
   : ''
-const opsLine = `\n\nOpening review for ${plan.operations.length} change(s)…`
+const opsLine = `\n\nI have not applied anything yet. Review ${plan.operations.length} proposed change(s) in the window and accept the ones you want.`
 
 setMessages((m) => {
   const c = [...m]

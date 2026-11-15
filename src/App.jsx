@@ -33,7 +33,7 @@ import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { loadTeam } from './lib/team'
 import LinkPanel from './components/LinkPanel'
 import { pendingActions, markAction, countLinks } from './lib/links'
-import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep } from './lib/ai'
+import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -548,6 +548,30 @@ const [showLogin, setShowLogin] = useState(false)
   }
 }, [isMobile])
 
+  // After changes are really applied: say what changed (from the real files), then explain it.
+  const reportChanges = async (ops, finalFiles, originalPrompt) => {
+    const seen = new Map()
+    for (const op of ops) seen.set(op.path, op) // last operation per file wins
+    const changes = [...seen.values()].map((op) => {
+      const content = finalFiles[op.path]?.content ?? ''
+      const lines = content ? content.split('\n').length : 0
+      if (op.type === 'delete_file') return { kind: 'deleted', path: op.path, excerpt: '' }
+      if (op.type === 'edit_file') {
+        const n = Array.isArray(op.edits) ? op.edits.length : 1
+        const sample = (op.edits || []).slice(0, 3).map((e) => `- ${String(e.find).slice(0, 120)}\n+ ${String(e.replace).slice(0, 160)}`).join('\n')
+        return { kind: 'edited', path: op.path, note: `${n} edit${n === 1 ? '' : 's'}`, excerpt: sample }
+      }
+      return { kind: op.type === 'create_file' ? 'created' : 'rewrote', path: op.path, note: `${lines} lines`, excerpt: content.slice(0, 900) }
+    })
+    if (!changes.length) return
+    const factual = changes.map((c) => `• ${c.kind[0].toUpperCase() + c.kind.slice(1)} ${c.path}${c.note ? ` (${c.note})` : ''}`).join('\n')
+    let why = ''
+    try {
+      why = await summarizeChanges({ originalPrompt, changes, model: settings.model, behavior: settings.behavior || 'friendly' })
+    } catch { /* the factual list alone is still honest */ }
+    setMessages((m) => [...m, { role: 'assistant', text: `${why ? why + '\n\n' : ''}What changed:\n${factual}`, time: Date.now() }])
+  }
+
   const showToast = (msg, kind = 'info') => {
     setToast({ msg, kind })
     setTimeout(() => setToast(null), 2400)
@@ -895,6 +919,7 @@ const saveActive = () => {
 
   setPendingPlan(null)
   showToast(`Applied ${chosenOps.length} change(s)`, 'ok')
+  reportChanges(chosenOps, nextFiles, originalPrompt).catch(() => {})
 
   // If test-after-apply is enabled, run the test loop
   if (testAfterApply) {
@@ -1502,6 +1527,7 @@ case 'importZip': setShowImport(true); break
 
           // Fresh local state of files
           let currentFiles = { ...files }
+          const allAppliedOps = []
 
           const teamOn = !!settings.team
           const LANE_MODELS = [settings.model, 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'openai/gpt-oss-20b']
@@ -1582,6 +1608,7 @@ case 'importZip': setShowImport(true); break
         }
               }
 
+              allAppliedOps.push(...ops)
               setFiles({ ...currentFiles })
 
               // Open the first file the step touched
@@ -1648,6 +1675,7 @@ case 'importZip': setShowImport(true); break
 
           setPlanningRunning(false)
           setPlanningCurrentStep(-1)
+          reportChanges(allAppliedOps, currentFiles, pendingPlanning?.originalPrompt).catch(() => {})
 
           // Auto-close the modal after a short delay so user sees the final state
           const allDone = steps.every((s) => planningStepStatuses[s.id] !== 'error')

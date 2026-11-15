@@ -487,3 +487,17 @@ export function isOverviewQuestion(text) {
   if (change) return false
   return /\b(look|looks|review|check|explain|understand|overview|summar|how (is|does|do|good)|what (is|does|do|are)|any (error|bug|issue|problem)|opinion|thoughts|feedback|rate|structure|my (file|code|project|app)|this (file|code|project|app))\b/.test(t)
 }
+
+
+// Asks the server for a short plain explanation of changes that were really applied.
+export async function summarizeChanges({ originalPrompt, changes, model, behavior }) {
+  const persona = await loadActivePersona().catch(() => '')
+  const res = await apiFetch(`${API_BASE}/api/agent/summarize`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ originalPrompt, changes, model, behavior, persona }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const j = await res.json()
+  return String(j.text || '')
+}

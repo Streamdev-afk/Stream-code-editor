@@ -466,7 +466,11 @@ WRITE CODE THAT RUNS THE FIRST TIME
 - If you are not sure about a library API or version, use the stable well-known form. If LIVE WEB RESULTS are given below, trust them over your memory.
 
 WRITE CLEAN TEXT
-- The fields "explanation", "plan", "title", "summary" and "description" are plain sentences: no markdown, no asterisks, no backticks, no emoji.`
+- The fields "explanation", "plan", "title", "summary" and "description" are plain sentences: no markdown, no asterisks, no backticks, no emoji.
+
+BE HONEST IN WHAT YOU SAY
+- The "explanation" must describe ONLY what your operations really do (which files, what they now contain or do). Never claim you tested, ran, checked, fixed or verified anything, and never mention a file, feature or fix that is not in your operations.
+- Write it as a short plain explanation a friend would give: what you changed and why, in 1-3 sentences.`
 
 const CHAT_GUIDE = `
 
@@ -510,6 +514,13 @@ app.post('/api/chat', async (req, res) => {
 - Answer questions about code, explain concepts, help plan.
 - If they ask you to build/change code, say: "Switch to Agent mode — I'll write it into your editor so you can review."
 - Don't dump whole files, show the relevant part.
+
+## HOW TO ANSWER
+- Answer the actual question first, in the first sentence. Then explain the why, briefly. Add a short example only if it helps.
+- Ground answers in THEIR code: name the real file, function or line you mean. If you are not sure, say what you are unsure about instead of guessing.
+- You can only talk in this panel. Never say you changed, created, ran, fixed or tested anything: only Agent mode changes files.
+- For a bug: say what is wrong, why it happens, and show the smallest fix. For a design choice: give a recommendation and the main trade-off.
+- If the question is vague, answer the most likely meaning and ask one short follow-up at the end.
 
 ## TONE
 Concise and friendly. Use \`code\` for identifiers. Honest if their code is buggy.
@@ -976,6 +987,40 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
     console.error('Execute-step error:', err)
     res.write(`data: ${JSON.stringify({ error: friendlyError(err) })}\n\n`)
     res.end()
+  }
+})
+
+
+// Plain-language explanation of changes that were really applied. It only sees the real changes,
+// so it cannot describe work that did not happen.
+app.post('/api/agent/summarize', async (req, res) => {
+  try {
+    const { originalPrompt, changes, model, behavior } = req.body || {}
+    if (!Array.isArray(changes) || !changes.length) return res.status(400).json({ error: 'changes required' })
+    const list = changes.slice(0, 12).map((c) =>
+      `- ${String(c.kind).slice(0, 12)} ${String(c.path).slice(0, 120)}${c.note ? ` (${String(c.note).slice(0, 80)})` : ''}\n${String(c.excerpt || '').slice(0, 900)}`
+    ).join('\n\n')
+    const SYSTEM = `You explain code changes to the person who asked for them, like a friendly developer finishing a job.
+Rules:
+- Use ONLY the CHANGES below. Describe what each file now does or what was changed in it. Never mention anything that is not in CHANGES.
+- Never say you ran, tested, previewed or verified anything. If something should be checked, say what to check in one short sentence.
+- 2 to 5 short sentences, plain text, no markdown, no bullet symbols, no emoji, no code blocks. Name the files in plain words.
+- Say what the user will see or can now do, not just file names.${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
+    const USER = `The user asked: ${String(originalPrompt || '(not given)').slice(0, 600)}\n\nCHANGES THAT WERE APPLIED:\n${list}`
+    let text = ''
+    const stream = guardedStream({
+      model: model || 'openai/gpt-oss-20b',
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
+      stream: true,
+      temperature: 0.3,
+      max_tokens: 500,
+    })
+    for await (const chunk of stream) text += chunk.choices[0]?.delta?.content || ''
+    text = text.replace(/[*`#]/g, '').trim()
+    if (!text) return res.status(502).json({ error: 'empty' })
+    res.json({ text })
+  } catch (err) {
+    res.status(500).json({ error: friendlyError(err) })
   }
 })
 
