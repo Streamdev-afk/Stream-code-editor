@@ -6,7 +6,7 @@ import crypto from 'crypto'
 import path from 'path'
 import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
-import { byokMiddleware, getByok, byokCreate, byokError } from './byok.js'
+import { byokMiddleware, getByok, byokCreate, byokError, readByok, listModels } from './byok.js'
 import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
 // Using your own key never counts against plan limits
 const checkLimit = async (req, c) => (req.byok ? { allowed: true } : _checkLimit(req, c))
@@ -79,6 +79,19 @@ app.use((req, res, next) => {
 
 app.use(attachUser)
 app.use(byokMiddleware)
+
+// Lists the models a user's own API key can use (so they pick instead of typing)
+app.post('/api/byok/models', async (req, res) => {
+  if (!req.isAuth) return res.status(401).json({ error: 'Sign in first.' })
+  const cfg = readByok(req, false)
+  if (!cfg) return res.status(400).json({ error: 'Enter your API key first.' })
+  if (cfg.error) return res.status(400).json({ error: cfg.error })
+  try {
+    res.json({ models: await listModels(cfg) })
+  } catch (e) {
+    res.status(e.status === 401 || e.status === 403 ? 401 : 502).json({ error: byokError(e) })
+  }
+})
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,

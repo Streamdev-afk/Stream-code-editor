@@ -24,10 +24,10 @@ function privateHost(h) {
   return a === 10 || a === 127 || a === 0 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
 }
 
-export function readByok(req) {
+export function readByok(req, needModel = true) {
   const key = String(req.headers['x-ai-key'] || '').trim()
   const model = String(req.headers['x-ai-model'] || '').trim()
-  if (!key || !model) return null
+  if (!key || (needModel && !model)) return null
   const provider = String(req.headers['x-ai-provider'] || '').trim().toLowerCase()
   let base = provider === 'custom' ? String(req.headers['x-ai-base'] || '').trim() : PRESETS[provider]
   if (!base) return { error: 'Unknown AI provider.' }
@@ -96,4 +96,25 @@ export function byokError(err) {
   if (s === 404) return 'The provider could not find that model name. Check it in Settings → AI models.'
   if (s === 429) return 'Your provider is rate limiting this key. Wait a moment and try again.'
   return `Your AI provider returned an error: ${String(err?.message || 'unknown').slice(0, 200)}`
+}
+
+const NOT_CHAT = /embed|whisper|tts|speech|moderation|dall-e|image|audio|realtime|transcribe|rerank|guard|vision-preview-old|babbage|davinci|ada\b/i
+
+// Asks the provider which models this key may use.
+export async function listModels(cfg) {
+  const res = await fetch(`${cfg.base}/models`, {
+    headers: { Authorization: `Bearer ${cfg.key}` },
+    signal: AbortSignal.timeout(20000),
+  })
+  if (!res.ok) {
+    let msg = ''
+    try { const j = await res.json(); msg = j?.error?.message || j?.message || '' } catch {}
+    const err = new Error(msg || `Provider answered ${res.status}`)
+    err.status = res.status
+    throw err
+  }
+  const j = await res.json()
+  const arr = Array.isArray(j) ? j : j.data || j.models || []
+  const ids = arr.map((m) => (typeof m === 'string' ? m : m.id || m.name)).filter(Boolean)
+  return [...new Set(ids)].filter((id) => !NOT_CHAT.test(id)).sort((a, b) => a.localeCompare(b)).slice(0, 600)
 }

@@ -65,6 +65,8 @@ import UsageDropdown from './components/UsageDropdown'
 import { startCheckout, redirectToCheckout } from './lib/paystack'
 import GitHubModal from './components/GitHubModal'
 import ActionsModal from './components/ActionsModal'
+import DesktopUpdater from './components/DesktopUpdater'
+import { saveToDisk, saveAllToDisk, chooseFolder, linkedFolder, canPickFolder } from './lib/diskSave'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
@@ -678,11 +680,40 @@ const saveActive = () => {
   })
   showToast(`Saved ${activeFile.split('/').pop()}`, 'ok')
 }
+  // ---- save to a real folder on this computer ----
+  const filesRef = useRef(files)
+  filesRef.current = files
+  const [diskFolder, setDiskFolder] = useState(null)
+  useEffect(() => { linkedFolder(activeSession.id).then(setDiskFolder) }, [activeSession.id])
+
+  const diskSaveActive = async () => {
+    if (!activeFile) return
+    const f = filesRef.current[activeFile]
+    if (typeof f?.content !== 'string') return
+    const r = await saveToDisk(activeSession.id, activeFile, f.content)
+    if (r.ok && r.where === 'folder') { setDiskFolder({ name: r.folder }); showToast(`Saved to ${r.folder}/${activeFile}`, 'ok') }
+    else if (r.ok) showToast(`Downloaded ${activeFile.split('/').pop()}`, 'ok')
+    else if (r.error) showToast(`Could not save to your computer: ${r.error}`, 'warn')
+  }
+  const diskSaveAll = async () => {
+    const r = await saveAllToDisk(activeSession.id, filesRef.current)
+    if (r.ok) { setDiskFolder({ name: r.folder }); showToast(`Saved ${r.count} file${r.count === 1 ? '' : 's'} to ${r.folder}`, 'ok') }
+    else if (!r.cancelled) showToast('Nothing was saved. Your browser may not allow saving to folders.', 'warn')
+  }
+  const diskChoose = async () => {
+    const c = await chooseFolder(activeSession.id)
+    if (c) { setDiskFolder(c); showToast(`Project folder: ${c.name}`, 'ok') }
+  }
+  const diskRef = useRef({})
+  diskRef.current = { diskSaveActive, diskSaveAll, saveActive }
+
   useEffect(() => {
     const handler = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.key === 's') {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        saveActive()
+        if (e.shiftKey) { diskRef.current.diskSaveAll(); return }
+        diskRef.current.saveActive()
+        diskRef.current.diskSaveActive()
       }
     }
     window.addEventListener('keydown', handler)
@@ -1309,7 +1340,7 @@ case 'importZip': setShowImport(true); break
     syncing={syncing}
     moreItems={[
       { icon: 'settings', label: 'Settings', onClick: () => setShowSettings(true) },
-      { icon: 'save', label: 'Save', onClick: saveActive, disabled: !activeFile },
+      { icon: 'save', label: 'Save', onClick: () => { saveActive(); diskSaveActive() }, disabled: !activeFile },
       { icon: 'undo', label: 'Revert', onClick: revertLast, disabled: history.length === 0 },
       { icon: 'upload', label: 'Import', onClick: () => setShowImport(true) },
       { icon: 'download', label: 'Export zip', onClick: handleExportZip },
@@ -1762,6 +1793,11 @@ case 'importZip': setShowImport(true); break
           <div className="status-item">History: {history.length}</div>
         )}
         <div className="status-spacer" />
+        {canPickFolder() && (
+          <button className="status-btn" onClick={diskChoose} title="Folder on this computer where Ctrl+S saves this project">
+            <Icon name="folder" size={13} /> {diskFolder ? diskFolder.name : 'Choose save folder'}
+          </button>
+        )}
         <button
           className="status-btn"
           onClick={handleGitHubPush}
@@ -1818,6 +1854,7 @@ case 'importZip': setShowImport(true); break
           onLink={() => { setShowSettings(false); setShowLink(true) }}
           testAfterApply={testAfterApply}
           onTestToggle={setTestAfterApply}
+          disk={{ folder: diskFolder, canPick: canPickFolder(), choose: diskChoose, saveAll: diskSaveAll }}
         />
       )}
 
@@ -1876,6 +1913,8 @@ case 'importZip': setShowImport(true); break
       {showLogin && (
         <LoginModal onClose={() => setShowLogin(false)} />
       )}
+
+      <DesktopUpdater />
 
       {showActions && <ActionsModal onClose={() => setShowActions(false)} />}
 
