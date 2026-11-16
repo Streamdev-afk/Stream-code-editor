@@ -15,6 +15,8 @@ import { resolveOp } from './lib/ops'
 import ProjectMenu from './components/ProjectMenu'
 import './App.css'
 import './modern.css'
+import './mobile.css'
+import MobileLayout from './components/MobileLayout'
 import InputModal from './components/InputModal'
 import {
   loadFiles, saveFiles, resetFiles, getLanguageFromPath, DEFAULT_FILES,
@@ -62,6 +64,7 @@ import UserMenu from './components/UserMenu'
 import UsageDropdown from './components/UsageDropdown'
 import { startCheckout, redirectToCheckout } from './lib/paystack'
 import GitHubModal from './components/GitHubModal'
+import ActionsModal from './components/ActionsModal'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
@@ -278,7 +281,8 @@ const [testAfterApply, setTestAfterApply] = useState(false)
 const [testProgress, setTestProgress] = useState(null) // null | { step, message } | { done: true }
 const isMobile = useMobile(768)
 const [showLogin, setShowLogin] = useState(false)
-    const [githubModal, setGithubModal] = useState(null) // null | 'push' | 'pull'
+    const [showActions, setShowActions] = useState(false)
+  const [githubModal, setGithubModal] = useState(null) // null | 'push' | 'pull'
   // ---- Cloud sync: on sign-in, load remote sessions (merge guest once) ----
   // ---- Cloud sync: on sign-in, load remote sessions ----
   // IMPORTANT: keyed on user.id so it ONLY runs when the user changes,
@@ -391,7 +395,7 @@ const [showLogin, setShowLogin] = useState(false)
     setAiActions((list) => list.filter((x) => x !== a))
     if (a.type === 'github_push') { setGhHint({ message: a.message }); handleGitHubPush() }
     else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
-    else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('editor') }
+    else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
     else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
   }
   const [toast, setToast] = useState(null)
@@ -1196,8 +1200,8 @@ case 'importZip': setShowImport(true); break
   )
 
   return (
-    <div className="app">
-      <div className="topbar">
+    <div className={`app ${isMobile ? 'm-on' : ''}`}>
+      {!isMobile && <div className="topbar">
         <div className="topbar-left">
           <div className="logo">
             <div className="logo-dot" />
@@ -1293,98 +1297,131 @@ case 'importZip': setShowImport(true); break
             </button>
           )}
         </div>
-      </div>
+      </div>}
 
-      
 {isMobile ? (
-  <div className="mobile-main">
-    {mobileView === 'files' && (
-      <div className="mobile-panel">
-        <FileTree
-          files={files}
+  <MobileLayout
+    tab={mobileView}
+    setTab={setMobileView}
+    fileName={activeFile}
+    editorRef={editorRef}
+    consoleCount={consoleMessages.length}
+    syncing={syncing}
+    moreItems={[
+      { icon: 'settings', label: 'Settings', onClick: () => setShowSettings(true) },
+      { icon: 'save', label: 'Save', onClick: saveActive, disabled: !activeFile },
+      { icon: 'undo', label: 'Revert', onClick: revertLast, disabled: history.length === 0 },
+      { icon: 'upload', label: 'Import', onClick: () => setShowImport(true) },
+      { icon: 'download', label: 'Export zip', onClick: handleExportZip },
+      { icon: 'push', label: 'Push to GitHub', onClick: handleGitHubPush },
+      { icon: 'pull', label: 'Pull from GitHub', onClick: handleGitHubPull },
+      { icon: 'play', label: 'GitHub Actions', onClick: () => setShowActions(true) },
+      { icon: 'search', label: 'Find in file', onClick: () => { setMobileView('editor'); setTimeout(() => editorRef.current?.openFind?.(), 150) } },
+    ]}
+    account={user ? <UserMenu /> : <button className="topbar-btn primary" onClick={() => setShowLogin(true)}>Sign in</button>}
+    files={
+      <FileTree
+        files={files}
+        activeFile={activeFile}
+        onFileClick={(path) => { openFile(path); setMobileView('editor') }}
+        onDelete={handleDelete}
+        onRename={handleRename}
+        onNewFile={handleNewFile}
+        onNewFolder={handleNewFolder}
+        onReset={handleReset}
+      />
+    }
+    search={<SearchPanel files={files} onOpenResult={(...a) => { openFileAtLine(...a); setMobileView('editor') }} />}
+    history={
+      <HistoryPanel
+        history={history}
+        onRestore={(entry) => { restoreSnapshot(entry); showToast(`Restored: ${entry.label}`, 'ok') }}
+        onClear={() => setHistory([])}
+      />
+    }
+    code={
+      <>
+        <Tabs
+          openTabs={openTabs}
           activeFile={activeFile}
-          onFileClick={(path) => { openFile(path); setMobileView('editor') }}
-          onDelete={handleDelete}
-          onRename={handleRename}
-          onNewFile={handleNewFile}
-          onNewFolder={handleNewFolder}
-          onReset={handleReset}
+          dirty={dirty}
+          onTabClick={setActiveFile}
+          onTabClose={closeTab}
+          rightSlot={aiActionsSlot}
         />
-      </div>
-    )}
-    {mobileView === 'editor' && (
-      <div className="mobile-panel">
-        {viewMode === 'code' ? (
-          <>
-            <Tabs
-              openTabs={openTabs}
-              activeFile={activeFile}
-              dirty={dirty}
-              onTabClick={setActiveFile}
-              onTabClose={closeTab}
-              rightSlot={aiActionsSlot}
-            />
-            {activeFile ? (
-              <Editor
-                ref={editorRef}
-                code={activeContent}
-                setCode={updateActiveContent}
-                language={activeLanguage}
-                settings={settings}
-              />
-            ) : (
-              <div className="empty-editor">Open a file from the explorer →</div>
-            )}
-          </>
-        ) : (
-          <Preview
-            files={files}
-            activeFile={activeFile}
-            onConsoleMessage={handleConsoleMessage}
-            sessionId={previewSession}
+        {activeFile ? (
+          <Editor
+            ref={editorRef}
+            code={activeContent}
+            setCode={updateActiveContent}
+            language={activeLanguage}
+            settings={settings}
+            mobile
           />
+        ) : (
+          <div className="empty-editor">No file open.<br />Tap Files below to open one, or ask the AI to build something.</div>
         )}
-      </div>
-    )}
-    {mobileView === 'ai' && (
-      <div className="mobile-panel">
-        <AIChat
-          code={activeContent}
-          language={activeLanguage}
-          files={files}
-          activeFile={activeFile}
-          messages={messages}
-          setMessages={setMessages}
-          sessionTitle={activeSession.title}
-          onFirstMessage={(text) => {
-            if (activeSession.title === 'New session') {
-              handleRenameSession(activeSession.id, generateTitle(text))
-            }
-          }}
-          onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
-          onAiActions={queueAiActions}
-          onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
-          model={settings.model}
-          onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
-          onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
-          onBehaviorChange={(b) => setSettings((x) => ({ ...x, behavior: b }))}
-          thinking={settings.thinking || 'medium'}
-          behavior={settings.behavior || 'friendly'}
-          testAfterApply={testAfterApply}
-          onTestToggle={setTestAfterApply}
+      </>
+    }
+    preview={
+      <Preview
+        files={files}
+        activeFile={activeFile}
+        onConsoleMessage={handleConsoleMessage}
+        sessionId={previewSession}
+      />
+    }
+    ai={
+      <AIChat
+        code={activeContent}
+        language={activeLanguage}
+        files={files}
+        activeFile={activeFile}
+        messages={messages}
+        setMessages={setMessages}
+        sessionTitle={activeSession.title}
+        onFirstMessage={(text) => {
+          if (activeSession.title === 'New session') {
+            handleRenameSession(activeSession.id, generateTitle(text))
+          }
+        }}
+        onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
+        onAiActions={queueAiActions}
+        onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
+        model={settings.model}
+        onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
+        onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
+        onBehaviorChange={(b) => setSettings((x) => ({ ...x, behavior: b }))}
+        thinking={settings.thinking || 'medium'}
+        behavior={settings.behavior || 'friendly'}
+        testAfterApply={testAfterApply}
+        onTestToggle={setTestAfterApply}
         team={!!settings.team}
         onTeamToggle={(v) => setSettings((x) => ({ ...x, team: v }))}
-          planningMode={true}
-          sessions={sessionStore.sessions}
-          activeSessionId={sessionStore.activeSessionId}
-          onSelectSession={handleSelectSession}
-          onNewSession={handleNewSession}
-          onRenameSession={handleRenameSession}
-          onDeleteSession={handleDeleteSession}
-        />
-      </div>
-    )}
-  </div>
+        planningMode={true}
+        sessions={sessionStore.sessions}
+        activeSessionId={sessionStore.activeSessionId}
+        onSelectSession={handleSelectSession}
+        onNewSession={handleNewSession}
+        onRenameSession={handleRenameSession}
+        onDeleteSession={handleDeleteSession}
+      />
+    }
+    terminal={
+      <BottomPanel
+        open
+        onClose={() => setMobileView('editor')}
+        consoleMessages={consoleMessages}
+        files={files}
+        onFilesChange={(newFiles) => {
+          pushHistory('Terminal command', Object.fromEntries(
+            Object.keys(files).map((k) => [k, files[k]?.content ?? null])
+          ), 'manual')
+          setFiles(newFiles)
+        }}
+      />
+    }
+  />
 ) : (
   <div className="main">
     {showSidebar && (
@@ -1696,7 +1733,7 @@ case 'importZip': setShowImport(true); break
 
 
 
-      <BottomPanel
+      {!isMobile && <BottomPanel
         open={bottomOpen}
         onClose={() => setBottomOpen(false)}
         consoleMessages={consoleMessages}
@@ -1707,26 +1744,7 @@ case 'importZip': setShowImport(true); break
           ), 'manual')
           setFiles(newFiles)
         }}
-      />
-
-      {isMobile && (
-        <div className="mobile-tabs">
-          <button
-            className={`mobile-tab ${mobileView === 'files' ? 'active' : ''}`}
-            onClick={() => setMobileView(mobileView === 'files' ? 'editor' : 'files')}
-          >
-            <span className="mobile-tab-icon"><Icon name="folder" size={19} /></span>
-            <span className="mobile-tab-label">Files</span>
-          </button>
-          <button
-            className={`mobile-tab ${mobileView === 'ai' ? 'active' : ''}`}
-            onClick={() => setMobileView(mobileView === 'ai' ? 'editor' : 'ai')}
-          >
-            <span className="mobile-tab-icon"><Icon name="bot" size={19} /></span>
-            <span className="mobile-tab-label">AI</span>
-          </button>
-        </div>
-      )}
+      />}
 
       {!isMobile && <div className="statusbar">
         <div className="status-item">
@@ -1757,6 +1775,13 @@ case 'importZip': setShowImport(true); break
           title="Import from GitHub"
         >
           <Icon name="pull" size={13} /> Import
+        </button>
+        <button
+          className="status-btn"
+          onClick={() => setShowActions(true)}
+          title="GitHub Actions"
+        >
+          <Icon name="play" size={13} /> Actions
         </button>
       </div>}
 
@@ -1851,6 +1876,8 @@ case 'importZip': setShowImport(true); break
       {showLogin && (
         <LoginModal onClose={() => setShowLogin(false)} />
       )}
+
+      {showActions && <ActionsModal onClose={() => setShowActions(false)} />}
 
       {githubModal && (
         <GitHubModal

@@ -10,6 +10,14 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
 
+  // Push target: a repo that already exists, or a brand new one
+  const linkKey = `ion-gh-links:${sessionTitle || 'project'}`
+  const readLinks = () => { try { return JSON.parse(localStorage.getItem(linkKey) || '[]') } catch { return [] } }
+  const [links, setLinks] = useState(readLinks)
+  const [target, setTarget] = useState(null) // { owner, repo } of an existing repo
+  const [pushRepos, setPushRepos] = useState(null)
+  const [pushSearch, setPushSearch] = useState('')
+
   // Pull mode state
   const [repos, setRepos] = useState(null)
   const [pullTarget, setPullTarget] = useState(null)
@@ -23,6 +31,17 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
         .replace(/^-+|-+$/g, '')
         .slice(0, 50)
       setRepoName(slug || 'stream-project')
+      ;(async () => {
+        try {
+          const list = await listUserRepos()
+          setPushRepos(list)
+          const first = readLinks()[0]
+          if (first && list.find((r) => r.fullName === first)) {
+            const [o, n] = first.split('/')
+            setTarget({ owner: o, repo: n })
+          }
+        } catch { setPushRepos([]) }
+      })()
     } else {
       // load user's repos
       ;(async () => {
@@ -49,13 +68,20 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
     setBusy(true); setError(null)
     try {
       const result = await pushToGitHub({
-        repoName: repoName.trim(),
+        repoName: (target ? target.repo : repoName).trim(),
+        owner: target ? target.owner : undefined,
         isPrivate,
         files,
         sessionTitle,
         commitMessage: commitMsg.trim(),
       })
       setSuccess(result)
+      try {
+        const full = `${result.owner}/${result.repo}`
+        const next = [full, ...readLinks().filter((x) => x !== full)].slice(0, 6)
+        localStorage.setItem(linkKey, JSON.stringify(next))
+        setLinks(next)
+      } catch {}
     } catch (err) {
       setError(err.message)
     } finally {
@@ -97,7 +123,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
               </div>
               <div className="modal-subtitle">
                 {mode === 'push'
-                  ? 'Creates a repo and commits all your files'
+                  ? 'Pick any of your repos, or create a new one'
                   : 'Load a repo as a new session'}
               </div>
             </div>
@@ -121,15 +147,49 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
             </div>
           ) : mode === 'push' ? (
             <>
-              <label className="gh-field">
-                <span className="gh-field-label">Repository name</span>
-                <input
-                  className="gh-input"
-                  value={repoName}
-                  onChange={(e) => setRepoName(e.target.value)}
-                  placeholder="my-project"
-                />
-              </label>
+              <div className="gh-field">
+                <span className="gh-field-label">Where to push</span>
+                <div className="gh-seg">
+                  <button type="button" className={target ? 'active' : ''} onClick={() => { if (!target && pushRepos?.length) { const r = pushRepos[0]; setTarget({ owner: r.fullName.split('/')[0], repo: r.name }) } }}>Existing repo</button>
+                  <button type="button" className={!target ? 'active' : ''} onClick={() => setTarget(null)}>New repo</button>
+                </div>
+              </div>
+
+              {target ? (
+                <>
+                  {links.length > 0 && (
+                    <div className="gh-chips">
+                      {links.map((l) => (
+                        <button type="button" key={l} className={`gh-chip ${target && `${target.owner}/${target.repo}` === l ? 'active' : ''}`} onClick={() => { const [o, n] = l.split('/'); setTarget({ owner: o, repo: n }) }}>{l}</button>
+                      ))}
+                    </div>
+                  )}
+                  <input className="gh-input" placeholder="Search your repos…" value={pushSearch} onChange={(e) => setPushSearch(e.target.value)} />
+                  <div className="gh-repo-list">
+                    {pushRepos === null ? (
+                      <div className="gh-empty">Loading your repos…</div>
+                    ) : (
+                      pushRepos.filter((r) => !pushSearch || r.fullName.toLowerCase().includes(pushSearch.toLowerCase())).map((r) => (
+                        <div key={r.fullName} className={`gh-repo-item ${target && `${target.owner}/${target.repo}` === r.fullName ? 'active' : ''}`} onClick={() => setTarget({ owner: r.fullName.split('/')[0], repo: r.name })}>
+                          <div className="gh-repo-name">{r.fullName}</div>
+                          <div className="gh-repo-meta">{r.private ? '🔒 Private' : '🌐 Public'}</div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="gh-field">
+                    <span className="gh-field-label">New repository name</span>
+                    <input className="gh-input" value={repoName} onChange={(e) => setRepoName(e.target.value)} placeholder="my-project" />
+                  </label>
+                  <label className="gh-field-row">
+                    <input type="checkbox" checked={isPrivate} onChange={(e) => setIsPrivate(e.target.checked)} />
+                    <span>Make this repo private</span>
+                  </label>
+                </>
+              )}
 
               <label className="gh-field">
                 <span className="gh-field-label">Commit message {hint?.message ? '(suggested by Qoders, edit if you like)' : '(optional)'}</span>
@@ -140,15 +200,6 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
                   onChange={(e) => setCommitMsg(e.target.value)}
                   placeholder="What changed?"
                 />
-              </label>
-
-              <label className="gh-field-row">
-                <input
-                  type="checkbox"
-                  checked={isPrivate}
-                  onChange={(e) => setIsPrivate(e.target.checked)}
-                />
-                <span>Make this repo private</span>
               </label>
 
               <div className="gh-file-count">
@@ -198,7 +249,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
             <button
               className="btn-accept"
               onClick={mode === 'push' ? handlePush : handlePull}
-              disabled={busy || (mode === 'push' ? !repoName.trim() : !pullTarget)}
+              disabled={busy || (mode === 'push' ? (target ? false : !repoName.trim()) : !pullTarget)}
             >
               {busy ? 'Working…' : mode === 'push' ? 'Push' : 'Import'}
             </button>

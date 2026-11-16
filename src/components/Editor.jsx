@@ -18,7 +18,7 @@ console.log(greet('world'))
 `
 
 const Editor = forwardRef(function Editor(
-  { code, setCode, language = 'javascript', settings },
+  { code, setCode, language = 'javascript', settings, mobile = false },
   ref
 ) {
   const editorRef = useRef(null)
@@ -228,7 +228,30 @@ const Editor = forwardRef(function Editor(
         lineNumbersMinChars: 3,
         automaticLayout: true,
         tabSize: settings?.tabSize ?? 2,
-        wordWrap: settings?.wordWrap === false ? 'off' : 'on',
+        wordWrap: settings?.wordWrap === false && !mobile ? 'off' : 'on',
+        ...(mobile ? {
+          minimap: { enabled: false },
+          fontSize: Math.max(14, settings?.fontSize ?? 14),
+          padding: { top: 10, bottom: 80 },
+          glyphMargin: false,
+          folding: false,
+          lineDecorationsWidth: 6,
+          lineNumbersMinChars: 2,
+          renderLineHighlight: 'none',
+          hover: { enabled: false },
+          parameterHints: { enabled: false },
+          contextmenu: false,
+          occurrencesHighlight: 'off',
+          selectionHighlight: false,
+          stickyScroll: { enabled: false },
+          overviewRulerLanes: 0,
+          hideCursorInOverviewRuler: true,
+          scrollbar: { vertical: 'hidden', horizontal: 'hidden', useShadows: false },
+          dragAndDrop: false,
+          suggest: { showStatusBar: false, preview: false },
+          suggestFontSize: 13,
+          fontLigatures: false,
+        } : {}),
       }}
     />
   )

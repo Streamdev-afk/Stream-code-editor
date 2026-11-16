@@ -4,6 +4,7 @@ import { getWeb, setWeb } from '../lib/web'
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
+import { PROVIDERS, getByok, setByok } from '../lib/byok'
 import UsageDropdown from './UsageDropdown'
 
 function Row({ label, hint, children }) {
@@ -27,6 +28,53 @@ function Toggle({ value, onChange }) {
     >
       <span className="toggle-knob" />
     </button>
+  )
+}
+
+function ByokSection() {
+  const saved = getByok() || {}
+  const [v, setV] = useState({ provider: 'openrouter', model: PROVIDERS[0].model, key: '', base: '', enabled: false, ...saved })
+  const [show, setShow] = useState(false)
+  const [done, setDone] = useState(false)
+  const prov = PROVIDERS.find((p) => p.id === v.provider) || PROVIDERS[0]
+  const upd = (patch) => { setDone(false); setV((x) => ({ ...x, ...patch })) }
+  const ready = v.key && v.model && (v.provider !== 'custom' || v.base)
+  const save = () => { setByok({ ...v, key: v.key.trim(), model: v.model.trim(), base: (v.base || '').trim() }); setDone(true) }
+  const clear = () => { setByok(null); setV({ provider: 'openrouter', model: PROVIDERS[0].model, key: '', base: '', enabled: false }); setDone(false) }
+  return (
+    <div className="byok">
+      <div className="byok-note">Use your own account with any provider. Your key stays in this browser and is sent only to run your request. Messages with your own key do not use up your plan.</div>
+      <label className="byok-field">
+        <span>Provider</span>
+        <select value={v.provider} onChange={(e) => { const p = PROVIDERS.find((x) => x.id === e.target.value); upd({ provider: p.id, model: p.model }) }}>
+          {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+        </select>
+        <small>{prov.hint}</small>
+      </label>
+      {v.provider === 'custom' && (
+        <label className="byok-field"><span>Base URL</span>
+          <input value={v.base || ''} onChange={(e) => upd({ base: e.target.value })} placeholder="https://api.example.com/v1" autoCapitalize="off" spellCheck="false" />
+        </label>
+      )}
+      <label className="byok-field"><span>Model name</span>
+        <input value={v.model} onChange={(e) => upd({ model: e.target.value })} placeholder="exact model id" autoCapitalize="off" spellCheck="false" />
+      </label>
+      <label className="byok-field"><span>API key</span>
+        <div className="byok-keyrow">
+          <input type={show ? 'text' : 'password'} value={v.key} onChange={(e) => upd({ key: e.target.value })} placeholder="paste your key" autoComplete="off" spellCheck="false" />
+          <button type="button" className="byok-eye" onClick={() => setShow((x) => !x)}>{show ? 'Hide' : 'Show'}</button>
+        </div>
+      </label>
+      <div className="byok-actions">
+        <button type="button" className="byok-save" disabled={!ready} onClick={() => { setV((x) => ({ ...x, enabled: true })); setByok({ ...v, enabled: true, key: v.key.trim(), model: v.model.trim(), base: (v.base || '').trim() }); setDone(true) }}>
+          {v.enabled ? 'Save changes' : 'Save and use my key'}
+        </button>
+        {v.enabled && <button type="button" className="byok-off" onClick={() => { setV((x) => ({ ...x, enabled: false })); setByok({ ...v, enabled: false }); setDone(false) }}>Turn off</button>}
+        {(saved.key || v.key) && <button type="button" className="byok-clear" onClick={clear}>Remove key</button>}
+      </div>
+      {v.enabled && <div className="byok-on">Using your {prov.label} key with {v.model}</div>}
+      {done && <div className="byok-ok">Saved. Your next message uses it.</div>}
+    </div>
   )
 }
 
@@ -82,6 +130,11 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <div className="settings-billing-wrap">
               <BillingPanel onUpgrade={onUpgrade} />
             </div>
+          </div>
+
+          <div className="settings-section">
+            <div className="settings-section-title">AI models (your own key)</div>
+            <ByokSection />
           </div>
 
           <div className="settings-section">

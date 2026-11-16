@@ -1,0 +1,28 @@
+{
+  "name": "ion-qoders-desktop",
+  "productName": "ION Qoders",
+  "version": "1.0.0",
+  "description": "ION Qoders desktop editor",
+  "main": "main.js",
+  "author": "ION",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --publish never"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.streamdevafk.qoders",
+    "productName": "ION Qoders",
+    "directories": { "output": "release" },
+    "files": ["main.js", "package.json"],
+    "extraResources": [{ "from": "../dist", "to": "web" }],
+    "win": { "target": ["nsis"] },
+    "mac": { "target": ["dmg"], "category": "public.app-category.developer-tools" },
+    "linux": { "target": ["AppImage"], "category": "Development" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  }
+}

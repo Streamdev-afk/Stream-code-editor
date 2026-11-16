@@ -1,10 +1,18 @@
 import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { AVAILABLE_MODELS } from '../lib/settings'
+import { byokActive, getByok } from '../lib/byok'
 
 export default function ModelSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
   const wrapRef = useRef(null)
+  const [, bump] = useState(0)
+  useEffect(() => {
+    const f = () => bump((n) => n + 1)
+    window.addEventListener('byok-changed', f)
+    return () => window.removeEventListener('byok-changed', f)
+  }, [])
+  const own = byokActive() ? getByok() : null
 
   const current = AVAILABLE_MODELS.find((m) => m.id === value) || AVAILABLE_MODELS[0]
 
@@ -26,7 +34,7 @@ export default function ModelSwitcher({ value, onChange, disabled, compact = fal
         title="Change AI model"
       >
         <span className="model-dot" />
-        <span className="switch-label">{current.label}</span>
+        <span className="switch-label">{own ? `My key · ${own.model.split('/').pop()}` : current.label}</span>
         <span className="model-caret"><Icon name="chevronDown" size={12} strokeWidth={2.4} /></span>
       </button>
       {open && (

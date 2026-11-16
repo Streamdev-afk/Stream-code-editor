@@ -26,11 +26,11 @@ export async function disconnectGitHub() {
   return data
 }
 
-export async function pushToGitHub({ repoName, isPrivate, files, sessionTitle, commitMessage }) {
+export async function pushToGitHub({ repoName, owner, isPrivate, files, sessionTitle, commitMessage }) {
   const res = await apiFetch(`${API_BASE}/api/github/push`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ repoName, isPrivate, files, sessionTitle, commitMessage }),
+    body: JSON.stringify({ repoName, owner, isPrivate, files, sessionTitle, commitMessage }),
   })
   const data = await res.json()
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
@@ -54,3 +54,15 @@ export async function pullFromGitHub({ owner, repo, branch }) {
   if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
   return data
 }
+
+async function actions(path, opts) {
+  const res = await apiFetch(`${API_BASE}/api/github/actions/${path}`, opts)
+  const data = await res.json()
+  if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`)
+  return data
+}
+export const listWorkflows = (repo) => actions(`workflows?repo=${encodeURIComponent(repo)}`)
+export const listRuns = (repo) => actions(`runs?repo=${encodeURIComponent(repo)}`)
+export const listJobs = (repo, runId) => actions(`jobs?repo=${encodeURIComponent(repo)}&run_id=${runId}`)
+export const runWorkflow = (repo, workflowId, ref) =>
+  actions('run', { method: 'POST', body: JSON.stringify({ repo, workflow_id: workflowId, ref }) })

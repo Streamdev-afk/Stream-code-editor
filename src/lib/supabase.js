@@ -1,3 +1,4 @@
+import { byokHeaders } from './byok'
 import { createClient } from '@supabase/supabase-js'
 
 const url = import.meta.env.VITE_SUPABASE_URL
@@ -38,6 +39,7 @@ export async function apiFetch(url, options = {}) {
     ...(options.headers || {}),
   }
   if (token) headers.Authorization = `Bearer ${token}`
+  if (/\/api\/(chat|edit|agent)/.test(String(url))) Object.assign(headers, byokHeaders())
 
   // The free Render server sleeps and answers the first request with a dropped connection
   // or a 502/503/504. Wait for it to wake up instead of showing an error.

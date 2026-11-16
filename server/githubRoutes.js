@@ -134,11 +134,15 @@ export default function createGithubRouter({ supabaseAdmin }) {
       if (!token) return res.status(400).json({ error: 'GitHub not connected' })
 
       const user = await getUser(token)
-      const owner = user.login
+      const wanted = String(req.body?.owner || '').replace(/[^a-zA-Z0-9-]/g, '')
+      const owner = wanted || user.login
       const safeRepo = repoName.replace(/[^a-zA-Z0-9._-]/g, '-')
 
-      // Create repo if needed
+      // Create repo if needed (only under your own account; for another owner the repo must already exist)
       const exists = await repoExists(token, owner, safeRepo)
+      if (!exists && owner !== user.login) {
+        return res.status(404).json({ error: `Could not find ${owner}/${safeRepo}, or your token cannot write to it.` })
+      }
       if (!exists) {
         await createRepo(token, safeRepo, {
           isPrivate,
@@ -189,7 +193,7 @@ export default function createGithubRouter({ supabaseAdmin }) {
       const token = await loadToken(req.user.id)
       if (!token) return res.status(400).json({ error: 'GitHub not connected' })
 
-      const res2 = await fetch('https://api.github.com/user/repos?sort=updated&per_page=50', {
+      const res2 = await fetch('https://api.github.com/user/repos?sort=updated&per_page=100', {
         headers: {
           Authorization: `Bearer ${token}`,
           Accept: 'application/vnd.github+json',
@@ -261,6 +265,79 @@ export default function createGithubRouter({ supabaseAdmin }) {
       res.status(500).json({ error: err.message })
     }
   })
+
+  // ---- GitHub Actions ----
+  const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+  async function gh(token, path, init = {}) {
+    const r = await fetch(`https://api.github.com${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'ION-Qoders',
+        'Content-Type': 'application/json',
+      },
+    })
+    if (r.status === 204) return {}
+    let data = {}
+    try { data = await r.json() } catch {}
+    if (!r.ok) {
+      const msg = data?.message || `GitHub HTTP ${r.status}`
+      const need = r.status === 403 || r.status === 404 ? ' Your token may be missing the "workflow" permission.' : ''
+      const err = new Error(msg + need)
+      err.status = r.status
+      throw err
+    }
+    return data
+  }
+  const actionsRoute = (handler) => async (req, res) => {
+    try {
+      const repo = String(req.query.repo || req.body?.repo || '')
+      if (!REPO_RE.test(repo)) return res.status(400).json({ error: 'repo must look like owner/name' })
+      const token = await loadToken(req.user.id)
+      if (!token) return res.status(400).json({ error: 'GitHub not connected' })
+      res.json(await handler({ token, repo, req }))
+    } catch (err) {
+      res.status(err.status === 404 ? 404 : 500).json({ error: err.message })
+    }
+  }
+
+  router.get('/actions/workflows', requireAuth, actionsRoute(async ({ token, repo }) => {
+    const d = await gh(token, `/repos/${repo}/actions/workflows`)
+    return { workflows: (d.workflows || []).filter((w) => w.state === 'active').map((w) => ({ id: w.id, name: w.name, path: w.path })) }
+  }))
+
+  router.get('/actions/runs', requireAuth, actionsRoute(async ({ token, repo }) => {
+    const d = await gh(token, `/repos/${repo}/actions/runs?per_page=12`)
+    return {
+      runs: (d.workflow_runs || []).map((r) => ({
+        id: r.id, name: r.name, number: r.run_number, status: r.status, conclusion: r.conclusion,
+        branch: r.head_branch, event: r.event, message: (r.display_title || '').slice(0, 100),
+        createdAt: r.created_at, url: r.html_url,
+      })),
+    }
+  }))
+
+  router.get('/actions/jobs', requireAuth, actionsRoute(async ({ token, repo, req }) => {
+    const id = Number(req.query.run_id)
+    if (!Number.isInteger(id)) throw new Error('run_id required')
+    const d = await gh(token, `/repos/${repo}/actions/runs/${id}/jobs`)
+    return {
+      jobs: (d.jobs || []).map((j) => ({
+        id: j.id, name: j.name, status: j.status, conclusion: j.conclusion,
+        steps: (j.steps || []).map((st) => ({ name: st.name, status: st.status, conclusion: st.conclusion })),
+      })),
+    }
+  }))
+
+  router.post('/actions/run', requireAuth, actionsRoute(async ({ token, repo, req }) => {
+    const id = Number(req.body?.workflow_id)
+    if (!Number.isInteger(id)) throw new Error('workflow_id required')
+    let ref = String(req.body?.ref || '').replace(/[^A-Za-z0-9._/-]/g, '')
+    if (!ref) ref = (await gh(token, `/repos/${repo}`)).default_branch
+    await gh(token, `/repos/${repo}/actions/workflows/${id}/dispatches`, { method: 'POST', body: JSON.stringify({ ref }) })
+    return { ok: true, ref }
+  }))
 
   return router
 }

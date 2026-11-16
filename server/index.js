@@ -6,7 +6,11 @@ import crypto from 'crypto'
 import path from 'path'
 import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
-import { checkLimit, recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
+import { byokMiddleware, getByok, byokCreate, byokError } from './byok.js'
+import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
+// Using your own key never counts against plan limits
+const checkLimit = async (req, c) => (req.byok ? { allowed: true } : _checkLimit(req, c))
+const recordUsage = (req, c) => (req.byok ? undefined : _recordUsage(req, c))
 import {
   initializeTransaction,
   disableSubscription,
@@ -52,6 +56,7 @@ const clean = (u) => String(u || '').trim().replace(/\/+$/, '')
 const ALLOWED_ORIGINS = [
   'http://localhost:5173',
   'http://localhost:4173',
+  'http://localhost:47831', // ION Qoders desktop app
   'https://stream-code-editor-tau.vercel.app',
   process.env.FRONTEND_URL,
   ...String(process.env.ALLOWED_ORIGINS || '').split(','),
@@ -73,6 +78,7 @@ app.use((req, res, next) => {
 })
 
 app.use(attachUser)
+app.use(byokMiddleware)
 
 const groq = new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -113,6 +119,7 @@ function getBehavioralPrefix(mode) {
 
 // Turn raw provider errors into messages a user can act on
 function friendlyError(err) {
+  if (getByok() && err?.message) return err.message
   const m = `${err?.message || ''} ${JSON.stringify(err?.error || '')}`
   if (err?.status === 429 || /rate.?limit/i.test(m)) return 'The AI is busy right now (rate limit). Wait a few seconds and send again, or switch to another model.'
   if (err?.status === 413 || /too large|context length|reduce the length|max.*tokens/i.test(m)) return 'This request is too big for the model. Try a shorter message, fewer/smaller files, or fewer images.'
@@ -151,6 +158,15 @@ async function fallbackModels(exclude, vision = false) {
 // Streams a completion with automatic recovery: empty reply, tool-call confusion or an unavailable
 // model move on to the next available model (only possible while no text has been sent yet).
 async function* guardedStream(params) {
+  { // your own key: one straight attempt, no model hopping
+    const b = getByok()
+    if (b) {
+      try {
+        for await (const chunk of await byokCreate(params, b)) yield chunk
+        return
+      } catch (e) { const err = new Error(byokError(e)); err.status = e.status; throw err }
+    }
+  }
   const BAD = /tool choice is none|called a tool|tool_use_failed|tool_call|decommission|model_not_found|does not exist|not supported|not available|no access|permission/i
   const tried = new Set()
   if (!/gpt-oss/.test(params.model || '') && params.reasoning_effort) { const { reasoning_effort, ...r } = params; params = r }
@@ -205,6 +221,7 @@ async function callGroqWithRetry(params, maxAttempts = 4) {
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      { const b = getByok(); if (b) return await byokCreate(params, b) }
       { const { __fb, ...p } = params; return await groq.chat.completions.create(p) }
     } catch (err) {
       lastErr = err
