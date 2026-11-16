@@ -6,6 +6,16 @@ on:
   workflow_dispatch:
   push:
     tags: ['desktop-v*']
+name: Desktop app
+
+# Builds the installable ION Qoders editor for Windows, Mac and Linux.
+# Run it from the Actions tab (Run workflow), or push a tag like v1.0.1 to also publish a release.
+# The finished installers are published to a small PUBLIC repo (secret RELEASES_REPO, e.g. yourname/ion-qoders-releases),
+# so installed apps can look for updates without any login. Your source code repo stays private.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
 
 jobs:
   build:
@@ -14,6 +24,132 @@ jobs:
       matrix:
         os: [windows-latest, macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Build the editor
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      - name: Package the desktop app
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm install
+          # tell the app where to look for updates (the public releases repo)
+          if [ -n "$RELEASES_REPO" ]; then
+            node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('package.json'));const [owner,repo]=process.env.RELEASES_REPO.split('/');d.build.publish=[{provider:'github',owner,repo}];fs.writeFileSync('package.json',JSON.stringify(d,null,2))"
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version; fi
+          npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          RELEASES_REPO: ${{ secrets.RELEASES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ion-qoders-${{ matrix.os }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.AppImage
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ secrets.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.AppImage
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on:name: Desktop app
+
+# Builds the installable ION Qoders editor for Windows, Mac and Linux.
+# Run it from the Actions tab (Run workflow), or push a tag like v1.0.1 to also publish a release.
+# The finished installers are published to a small PUBLIC repo (secret RELEASES_REPO, e.g. yourname/ion-qoders-releases),
+# so installed apps can look for updates without any login. Your source code repo stays private.
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Build the editor
+        run: |
+          npm ci
+          npm run build
+        env:
+          VITE_API_URL: ${{ secrets.VITE_API_URL }}
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+      - name: Package the desktop app
+        working-directory: desktop
+        shell: bash
+        run: |
+          npm install
+          # tell the app where to look for updates (the public releases repo)
+          if [ -n "$RELEASES_REPO" ]; then
+            node -e "const fs=require('fs');const d=JSON.parse(fs.readFileSync('package.json'));const [owner,repo]=process.env.RELEASES_REPO.split('/');d.build.publish=[{provider:'github',owner,repo}];fs.writeFileSync('package.json',JSON.stringify(d,null,2))"
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then npm version "${GITHUB_REF_NAME#v}" --no-git-tag-version --allow-same-version; fi
+          npm run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          RELEASES_REPO: ${{ secrets.RELEASES_REPO }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ion-qoders-${{ matrix.os }}
+          path: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.AppImage
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          repository: ${{ secrets.RELEASES_REPO }}
+          token: ${{ secrets.RELEASES_TOKEN }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            desktop/release/*.exe
+            desktop/release/*.dmg
+            desktop/release/*.AppImage
+            desktop/release/*.blockmap
+            desktop/release/latest*.yml
+ ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
