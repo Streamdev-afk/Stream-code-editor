@@ -509,7 +509,8 @@ const CHAT_GUIDE = `
 - Be accurate: if unsure about an API or version, say so instead of guessing. Use the LIVE WEB RESULTS when they are given.
 - Show code when it helps (up to about 40 lines, in a fenced block with the language). Explain what to change and where. For whole features or new files, tell the user to switch to Agent mode.
 - Use light formatting: short paragraphs, bullet lists for steps, **bold** only for key terms. Never leave stray symbols.
-- If the question is unclear, ask ONE short clarifying question.
+- If the question is unclear and you cannot reasonably guess, follow the QUESTIONS rules below.
+- For comparisons use a proper markdown table (header row, then a |---|---| row). Never draw tables or lines with plain characters.
 - Do NOT use the terminal unless you must read existing code to answer.`
 
 const EDIT_FILE_RULES = `
@@ -532,7 +533,7 @@ app.post('/api/chat', async (req, res) => {
   }
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
-  const behavioralSuffix = getBehavioralPrefix(behavior) + personaBlock(req.body.persona)
+  const behavioralSuffix = getBehavioralPrefix(behavior) + personaBlock(req.body.persona) + askBlock(req, 'chat')
   // Sending a whole big file with every message burns tokens: cap it
   const MAX_CHAT_CODE = 6000
   const codeForPrompt = code && code.length > MAX_CHAT_CODE
@@ -550,7 +551,7 @@ app.post('/api/chat', async (req, res) => {
 - Ground answers in THEIR code: name the real file, function or line you mean. If you are not sure, say what you are unsure about instead of guessing.
 - You can only talk in this panel. Never say you changed, created, ran, fixed or tested anything: only Agent mode changes files.
 - For a bug: say what is wrong, why it happens, and show the smallest fix. For a design choice: give a recommendation and the main trade-off.
-- If the question is vague, answer the most likely meaning and ask one short follow-up at the end.
+- If the question is vague, answer the most likely meaning. Only if the answer would change completely, follow the QUESTIONS rules below.
 
 ## TONE
 Concise and friendly. Use \`code\` for identifiers. Honest if their code is buggy.
@@ -692,8 +693,10 @@ You respond with ONLY a JSON object:
     { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] },
     { "type": "delete_file", "path": "src/Old.jsx" }
   ],
-  "actions": [ { "type": "github_push", "message": "Add pricing page" } ]
+  "actions": [ { "type": "github_push", "message": "Add pricing page" } ],
+  "ask": { "question": "...", "options": ["...", "..."], "multi": false }
 }
+"ask" is OPTIONAL: see QUESTIONS below. Leave it out unless you truly need an answer.
 
 "actions" is OPTIONAL. Leave it out unless the user explicitly asked for one of these. The user must approve every action, you can never run them yourself:
 - github_push: the user wants the project saved/pushed to GitHub (opens the push dialog). "message" = a git commit message for what changed (imperative, max 72 characters, plain text)
@@ -720,7 +723,7 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${askBlock(req, 'json')}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -767,6 +770,22 @@ For React:
 })
 
 // A character from the ION app lends its voice to the answer text. It never changes the code or the JSON format.
+
+// How and when the AI may ask the user a question (shown as a pop-up with options)
+function askBlock(req, mode) {
+  if (req.body?.allowQuestions === false) {
+    return `\n\n## QUESTIONS\nDo NOT ask the user any questions. Make sensible assumptions and say in one line what you assumed.`
+  }
+  const how = mode === 'chat'
+    ? `Put it at the very END of your reply, on its own lines, exactly like this (valid JSON inside):\n[[ASK]]{"question":"Which style do you want?","options":["Minimal","Colorful","Dark"],"multi":false}[[/ASK]]`
+    : `Return it in the JSON field "ask" like {"question":"Which style do you want?","options":["Minimal","Colorful","Dark"],"multi":false} and leave "operations" (or "steps") empty.`
+  return `\n\n## QUESTIONS
+Ask ONLY when you truly cannot continue without a choice that changes the result (for example which framework, which design direction, or which of two very different meanings). Never ask about things you can reasonably decide yourself, and never ask more than one question at a time.
+${how}
+Give 2 to 5 short options (the user can also type their own answer). Set "multi" to true only if several can be picked.
+If the user told you not to ask questions, or to just decide, NEVER ask: choose sensible defaults and say what you chose.`
+}
+
 function personaBlock(persona) {
   const t = typeof persona === 'string' ? persona.trim().slice(0, 2500) : ''
   if (!t) return ''
@@ -843,7 +862,7 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${askBlock(req, 'json')}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
