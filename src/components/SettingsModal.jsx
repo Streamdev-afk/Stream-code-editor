@@ -122,7 +122,7 @@ const PAGES = [
   { id: 'about', label: 'About & updates', desc: 'Version and desktop updates', icon: 'compass' },
 ]
 
-export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull, onLink, testAfterApply, onTestToggle, disk }) {
+export default function SettingsModal({ settings, onChange, onClose, onUpgrade, onManage, isMobile, onPush, onPull, onLink, testAfterApply, onTestToggle, disk, onOpenRules, hasRules }) {
   const set = (key, value) => onChange({ ...settings, [key]: value })
   const [web, setWebState] = useState(getWeb())
   const [page, setPage] = useState(isMobile ? null : 'plan') // null = the list (phones)
@@ -174,6 +174,9 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             </Row>
             <Row label="AI can ask me questions" hint="When it needs a decision, it pops up a question with options. Turn off and it decides by itself.">
               <Toggle value={settings.askQuestions !== false} onChange={(v) => set('askQuestions', v)} />
+            </Row>
+            <Row label="Project rules" hint="A file called ION.md that the AI reads before every answer. Write things it must always follow.">
+              <button className="topbar-btn small" onClick={() => onOpenRules?.()}>{hasRules ? 'Open rules' : 'Create rules'}</button>
             </Row>
             <Row label="Team mode" hint="Several AIs build different parts at the same time">
               <Toggle value={!!settings.team} onChange={(v) => set('team', v)} />

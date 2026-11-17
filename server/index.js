@@ -533,7 +533,7 @@ app.post('/api/chat', async (req, res) => {
   }
   if (!messages || !Array.isArray(messages)) return res.status(400).json({ error: 'messages required' })
 
-  const behavioralSuffix = getBehavioralPrefix(behavior) + personaBlock(req.body.persona) + askBlock(req, 'chat')
+  const behavioralSuffix = getBehavioralPrefix(behavior) + personaBlock(req.body.persona) + rulesBlock(req) + askBlock(req, 'chat')
   // Sending a whole big file with every message burns tokens: cap it
   const MAX_CHAT_CODE = 6000
   const codeForPrompt = code && code.length > MAX_CHAT_CODE
@@ -723,7 +723,7 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${askBlock(req, 'json')}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -772,6 +772,12 @@ For React:
 // A character from the ION app lends its voice to the answer text. It never changes the code or the JSON format.
 
 // How and when the AI may ask the user a question (shown as a pop-up with options)
+function rulesBlock(req) {
+  const r = typeof req.body?.rules === 'string' ? req.body.rules.trim().slice(0, 6000) : ''
+  if (!r) return ''
+  return `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}`
+}
+
 function askBlock(req, mode) {
   if (req.body?.allowQuestions === false) {
     return `\n\n## QUESTIONS\nDo NOT ask the user any questions. Make sensible assumptions and say in one line what you assumed.`
@@ -862,7 +868,7 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${askBlock(req, 'json')}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))

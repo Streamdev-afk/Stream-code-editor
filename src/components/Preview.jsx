@@ -3,16 +3,25 @@ import { useMemo, useRef, useEffect, useState } from 'react'
 import { buildPreview } from '../lib/preview'
 import { API_BASE } from '../lib/api'
 
-export default function Preview({ files, activeFile, onConsoleMessage, sessionId }) {
+export default function Preview({ files, activeFile, onConsoleMessage, sessionId, onAskAI }) {
   const [key, setKey] = useState(0)
   const [mode, setMode] = useState('inline') // 'inline' | 'url'
   const iframeRef = useRef(null)
   const [copied, setCopied] = useState(false)
+  const [picking, setPicking] = useState(false)
+  const [picked, setPicked] = useState(null) // element the user clicked
+  const [ask, setAsk] = useState('')
 
   const html = useMemo(() => buildPreview(files, activeFile), [files, activeFile])
   const previewUrl = sessionId ? `${API_BASE}/preview/${sessionId}/` : null
   useEffect(() => {
     const handler = (e) => {
+      if (e.data && e.data.__pick && e.source === iframeRef.current?.contentWindow) {
+        setPicked(e.data)
+        setAsk('')
+        setPicking(false)
+        return
+      }
       if (e.data && e.data.__preview) {
         onConsoleMessage?.({
           level: e.data.level,
@@ -27,7 +36,35 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
 
   useEffect(() => {
     setKey((k) => k + 1)
+    setPicking(false)
+    setPicked(null)
   }, [html])
+
+  // turn the click-to-select mode on or off inside the page
+  useEffect(() => {
+    iframeRef.current?.contentWindow?.postMessage({ __pickMode: picking }, '*')
+  }, [picking, key])
+  const onFrameLoad = () => iframeRef.current?.contentWindow?.postMessage({ __pickMode: picking }, '*')
+
+  const sendChange = () => {
+    if (!picked || !ask.trim()) return
+    const st = picked.styles || {}
+    const prompt = [
+      'Change one element of the live preview.',
+      `Element: <${picked.tag}> (selector: ${picked.selector})`,
+      picked.text ? `Its text: "${picked.text}"` : '',
+      `Its HTML: ${picked.html}`,
+      `Current look: color ${st.color}, background ${st.background}, font-size ${st.fontSize}, padding ${st.padding}, radius ${st.borderRadius}`,
+      '',
+      `What I want: ${ask.trim()}`,
+      '',
+      'Find where this element is made in the project files and change only what is needed. Keep everything else exactly the same.',
+    ].filter((l) => l !== '').join('\n')
+    const shown = `Change the ${picked.tag}${picked.text ? ` "${picked.text.slice(0, 40)}"` : ''}: ${ask.trim()}`
+    onAskAI?.({ prompt, shown })
+    setPicked(null)
+    setAsk('')
+  }
 
   const copyUrl = async () => {
     if (!previewUrl) return
@@ -76,6 +113,13 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
         )}
 
         <div className="preview-actions">
+          {mode === 'inline' && onAskAI && (
+            <button
+              className={`topbar-btn small ${picking ? 'pick-on' : ''}`}
+              onClick={() => { setPicked(null); setPicking((p) => !p) }}
+              title="Click an element in the preview, then tell the AI what to change"
+            ><Icon name="bolt" size={13} /> {picking ? 'Pick an element…' : 'Select'}</button>
+          )}
           <button
             className="topbar-btn small"
             onClick={() => setKey((k) => k + 1)}
@@ -91,6 +135,7 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
           className="preview-frame"
           title="Preview"
           srcDoc={html}
+          onLoad={onFrameLoad}
           sandbox="allow-scripts allow-modals allow-forms"
         />
       ) : (
@@ -112,6 +157,22 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
               Waiting for the backend to create a session…
             </div>
           )}
+        </div>
+      )}
+      {picked && (
+        <div className="pick-pop" role="dialog" aria-label="Change this element">
+          <div className="pick-chip"><Icon name="bolt" size={12} /> &lt;{picked.tag}&gt;{picked.text ? ` "${picked.text.slice(0, 36)}${picked.text.length > 36 ? '…' : ''}"` : ''}</div>
+          <div className="pick-row">
+            <input
+              autoFocus
+              value={ask}
+              onChange={(e) => setAsk(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') sendChange(); if (e.key === 'Escape') setPicked(null) }}
+              placeholder="What should change? e.g. make it bigger and blue"
+            />
+            <button className="pick-go" disabled={!ask.trim()} onClick={sendChange}>Change</button>
+            <button className="pick-x" onClick={() => setPicked(null)} aria-label="Cancel"><Icon name="close" size={13} /></button>
+          </div>
         </div>
       )}
     </div>

@@ -35,7 +35,7 @@ import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { loadTeam } from './lib/team'
 import LinkPanel from './components/LinkPanel'
 import { pendingActions, markAction, countLinks } from './lib/links'
-import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions } from './lib/ai'
+import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions, setProjectRules } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -424,6 +424,8 @@ const [showLogin, setShowLogin] = useState(false)
   }, [])
 
   // Phase 4 state
+  const [pendingAi, setPendingAi] = useState(null) // request coming from click-to-edit in the preview
+  const askAiFromPreview = (req) => { setPendingAi(req); setMobileView('ai'); setShowAI?.(true) }
   const [mobileView, setMobileView] = useState('editor') // 'files' | 'editor' | 'ai' | 'preview'
   const [viewMode, setViewMode] = useState('code') // 'code' | 'preview'
   const [consoleMessages, setConsoleMessages] = useState([])
@@ -589,6 +591,9 @@ const [showLogin, setShowLogin] = useState(false)
   // A collapsed "what I did" line in the chat (no message text)
   const addActivity = (items) => setMessages((m) => [...m, { role: 'assistant', text: '', activity: items, time: Date.now() }])
   useEffect(() => { setAskQuestions(settings.askQuestions !== false) }, [settings.askQuestions])
+  // project rules file: ION.md, AGENTS.md or .ionrules at the project root
+  const rulesPath = ['ION.md', 'AGENTS.md', '.ionrules'].find((n) => files[n])
+  useEffect(() => { setProjectRules(rulesPath ? files[rulesPath].content : '') }, [rulesPath, rulesPath && files[rulesPath]?.content])
   useEffect(() => {
     const onTest = (e) => {
       const d = e.detail || {}
@@ -1031,6 +1036,17 @@ const restoreSnapshot = (entry) => {
   }
 
     // ---------- File management ----------
+  // creates (or opens) ION.md, the file where the user writes rules the AI must always follow
+  const openRulesFile = () => {
+    const name = rulesPath || 'ION.md'
+    if (!files[name]) {
+      setFiles(createFile(files, name, `# Project rules\n\nThe AI reads this file before every answer. Write things it should always do.\n\n- Use TypeScript, not JavaScript\n- Keep components small and well named\n- Never add new libraries without asking me\n- Reply in simple English\n`))
+    }
+    setShowSettings(false)
+    openFile(name)
+    setMobileView('editor')
+  }
+
   const handleNewFile = (parentPath) => {
     setInputModal({ type: 'new-file', parent: parentPath })
   }
@@ -1420,10 +1436,13 @@ case 'importZip': setShowImport(true); break
         activeFile={activeFile}
         onConsoleMessage={handleConsoleMessage}
         sessionId={previewSession}
+        onAskAI={askAiFromPreview}
       />
     }
     ai={
       <AIChat
+        pendingRequest={pendingAi}
+        onRequestHandled={() => setPendingAi(null)}
         code={activeContent}
         language={activeLanguage}
         files={files}
@@ -1551,11 +1570,14 @@ case 'importZip': setShowImport(true); break
           activeFile={activeFile}
           onConsoleMessage={handleConsoleMessage}
           sessionId={previewSession}
+          onAskAI={askAiFromPreview}
         />
       )}
     </div>
     {showAI && (
       <AIChat
+        pendingRequest={pendingAi}
+        onRequestHandled={() => setPendingAi(null)}
         code={activeContent}
         language={activeLanguage}
         files={files}
@@ -1867,6 +1889,8 @@ case 'importZip': setShowImport(true); break
           onChange={setSettings}
           onClose={() => setShowSettings(false)}
           onUpgrade={handleUpgrade}
+          onOpenRules={openRulesFile}
+          hasRules={!!rulesPath}
           isMobile={isMobile}
           onManage={handleManageBilling}
           onPush={() => { setShowSettings(false); handleGitHubPush() }}

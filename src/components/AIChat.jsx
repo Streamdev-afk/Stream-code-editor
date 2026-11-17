@@ -30,6 +30,8 @@ const parseShellRequest = (text) => {
 }
 
 export default function AIChat({
+  pendingRequest,
+  onRequestHandled,
   code,
   language,
   files,
@@ -408,6 +410,14 @@ setMessages((m) => {
     setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...last, text, _askDone: true }; return c })
     if (q && askQuestionsOn()) setAsk({ ...q, mode: 'chat' })
   }, [streaming, messages])
+
+  // "Select" in the preview: run the described change as an agent request
+  useEffect(() => {
+    if (!pendingRequest || streaming) return
+    onRequestHandled?.()
+    setMode('agent')
+    sendAgent(pendingRequest.prompt, [], pendingRequest.shown)
+  }, [pendingRequest])
 
   const answerAsk = (answer) => {
     const a = ask

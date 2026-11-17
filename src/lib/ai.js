@@ -2,6 +2,8 @@ import { getWeb } from './web'
 
 // Whether the AI may pop up a question when it needs a decision (Settings → AI assistant)
 let ASK_OK = true
+let RULES = ''
+export const setProjectRules = (t) => { RULES = (t || '').slice(0, 6000) }
 export const setAskQuestions = (v) => { ASK_OK = v !== false }
 export const askQuestionsOn = () => ASK_OK
 import { API_BASE } from './api'
@@ -125,7 +127,7 @@ async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK }),
+    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK, rules: RULES }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
