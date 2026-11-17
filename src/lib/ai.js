@@ -182,13 +182,13 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
       console.error(`${kind} raw output:`, full)
       // the server told us why it stopped (rate limit, model error...): show that, not "invalid JSON"
       if (streamError) throw new Error(streamError)
-      throw new Error(
+      throw Object.assign(new Error(
         kind === 'Plan'
           ? 'The planner could not finish. Try again or rephrase.'
           : kind === 'Step'
             ? 'The step was too long and got cut off. Try again, or ask for one smaller part at a time.'
             : 'The answer was too long and got cut off. Try again, or ask for one smaller part at a time.'
-      )
+      ), { parseFail: true })
     }
   }
 
@@ -244,8 +244,19 @@ export function planTask(args, onChunk, onStatus) {
   return runExplorable('/api/agent/plan', args, onChunk, onStatus, 'Plan')
 }
 
-export function executeStep(args, onChunk, onStatus) {
-  return runExplorable('/api/agent/execute-step', args, onChunk, onStatus, 'Step')
+// A step whose answer could not be read is tried again (up to 2 more times) with a stricter, shorter instruction
+export async function executeStep(args, onChunk, onStatus) {
+  let lastErr
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const a = attempt === 0 ? args : { ...args, strict: true, thinking: 'low' }
+      return await runExplorable('/api/agent/execute-step', a, onChunk, onStatus, 'Step')
+    } catch (e) {
+      lastErr = e
+      if (!e.parseFail) throw e
+    }
+  }
+  throw lastErr
 }
 
 // Helpers the chat panel uses to read the project the same way

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { createPortal } from 'react-dom'
 import Icon from './Icon'
 import { listCharacters, getTeamMembers, setTeamMembers, getPersonaChoice, setPersonaChoice, MAX_TEAM } from '../lib/team'
 
@@ -16,7 +17,7 @@ export default function TeamPanel({ onClose }) {
   const remove = (id) => members.length > 2 && setMembers((m) => m.filter((x) => x.id !== id))
   const pick = (c) => { const v = c ? { charId: c.id, name: c.name } : null; setPersona(v); setPersonaChoice(v) }
 
-  return (
+  return createPortal(
     <div className="modal-backdrop" onClick={onClose}>
       <div className="modal team-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
@@ -65,6 +66,7 @@ export default function TeamPanel({ onClose }) {
           </section>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }

@@ -608,7 +608,7 @@ const [showLogin, setShowLogin] = useState(false)
   }, [user, showSettings])
   useEffect(() => {
     const c = loadCheckpoint(activeSession.id)
-    setCtx('progress', c ? `Task: ${c.prompt}\nDone: ${(c.doneTitles || []).join('; ') || 'nothing'}\nStill to do: ${(c.todoTitles || []).join('; ') || 'unknown'}\nFiles already created: ${(c.doneFiles || []).join(', ') || 'none'}` : '')
+    setCtx('progress', c ? `Task: ${c.prompt}\nDone: ${(c.doneTitles || []).join('; ') || 'nothing'}\nStill to do: ${(c.todoTitles || []).join('; ') || 'unknown'}\nFAILED steps (they did NOT work - never say they succeeded; offer to fix them): ${(c.failed || []).join('; ') || 'none'}\nFiles already created: ${(c.doneFiles || []).join(', ') || 'none'}` : '')
   }, [activeSession.id, pendingPlanning])
   useEffect(() => {
     const onTest = (e) => {
@@ -1669,13 +1669,14 @@ case 'importZip': setShowImport(true); break
           // pick up where an earlier run stopped: steps already finished are skipped
           const ckpt = loadCheckpoint(activeSession.id)
           const doneIds = new Set(ckpt && ckpt.prompt === pendingPlanning.originalPrompt ? ckpt.doneIds || [] : [])
-          const doneTitles = []
+          const failures = [] // { title, error } steps that did not finish
           const doneFiles = new Set(ckpt && ckpt.prompt === pendingPlanning.originalPrompt ? ckpt.doneFiles || [] : [])
           const writeCkpt = () => saveCheckpoint(activeSession.id, {
             prompt: pendingPlanning.originalPrompt,
             doneIds: [...doneIds], doneFiles: [...doneFiles],
             doneTitles: steps.filter((x) => doneIds.has(x.id)).map((x) => x.title),
             todoTitles: steps.filter((x) => !doneIds.has(x.id)).map((x) => x.title),
+            failed: failures.map((f) => `${f.title} (${f.error})`),
           })
           const runLane = async (steps, laneNo) => {
           const member = team[laneNo]
@@ -1805,6 +1806,7 @@ case 'importZip': setShowImport(true); break
 
                 // Insert substeps into the loop by mutating the steps array
                 steps.splice(i + 1, 0, ...parts)
+                doneIds.add(step.id) // its two smaller parts take over
                 setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
                 setPlanningStepLogs((s) => ({
                   ...s,
@@ -1813,6 +1815,8 @@ case 'importZip': setShowImport(true); break
                 continue
               }
 
+              failures.push({ title: step.title, error: String(err.message || err).slice(0, 140) })
+              writeCkpt()
               setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
               setPlanningStepLogs((s) => ({ ...s, [step.id]: `✕ ${err.message}` }))
               setPlanningError(`Step ${step.id} failed: ${err.message}`)
@@ -1825,12 +1829,21 @@ case 'importZip': setShowImport(true); break
           setPlanningRunning(false)
           setPlanningCurrentStep(-1)
           const failed = steps.some((x) => !doneIds.has(x.id) && !x._substep)
-          if (!failed) clearCheckpoint(activeSession.id)
+          if (!failed && !failures.length) clearCheckpoint(activeSession.id)
+          else writeCkpt()
+          // tell the AI (and the user) plainly which steps did not work, so nothing is reported as done by mistake
+          if (failures.length) {
+            setMessages((m) => [...m, {
+              role: 'assistant',
+              time: Date.now(),
+              text: `⚠️ ${failures.length === 1 ? 'One step' : failures.length + ' steps'} did NOT finish, so nothing from ${failures.length === 1 ? 'it' : 'them'} was added:\n\n${failures.map((f) => `- ${f.title}: ${f.error}`).join('\n')}\n\nThe rest was applied. Do you want me to fix ${failures.length === 1 ? 'it' : 'them'} and continue? Just say "yes" or "continue".`,
+            }])
+          }
           // the AI's own memory file: one line per finished job, no AI tokens needed
           if (allAppliedOps.length) {
             const day = new Date().toISOString().slice(0, 10)
             const made = [...new Set(allAppliedOps.map((o) => o.path))].filter((p) => p !== MEM_FILE)
-            const line = `- ${day} ${failed ? '(unfinished) ' : ''}${String(pendingPlanning.originalPrompt || '').slice(0, 140)} → ${made.slice(0, 12).join(', ')}${made.length > 12 ? ` +${made.length - 12} more` : ''}\n`
+            const line = `- ${day} ${failed || failures.length ? '(unfinished) ' : ''}${String(pendingPlanning.originalPrompt || '').slice(0, 140)} → ${made.slice(0, 12).join(', ')}${made.length > 12 ? ` +${made.length - 12} more` : ''}\n`
             const prev = currentFiles[MEM_FILE]?.content || '# ION memory\n\nThe AI keeps this file up to date. It lists what was built so it does not need to read the whole chat again.\n\n'
             currentFiles[MEM_FILE] = { content: prev + line, language: 'markdown' }
             setFiles({ ...currentFiles })

@@ -1,3 +1,4 @@
+import { createPortal } from 'react-dom'
 import Icon from './Icon'
 import RichText from './RichText'
 import { getWeb, setWeb } from '../lib/web'
@@ -494,32 +495,38 @@ setMessages((m) => {
               <button className={`aichat-icon-btn ${showMore ? 'active' : ''}`} onClick={() => setShowMore((v) => !v)} title="More options">
                 <Icon name="dots" size={16} />
               </button>
-              {showMore && (
-                <>
-                  <div className="aichat-more-shade" onClick={() => setShowMore(false)} />
-                  <div className="aichat-more-menu">
-                    {mode === 'agent' && (
+              {showMore && createPortal(
+                <div className="modal-backdrop" onClick={() => setShowMore(false)}>
+                  <div className="modal more-modal" onClick={(e) => e.stopPropagation()}>
+                    <div className="modal-header">
+                      <div className="modal-title-group"><h3>AI options</h3></div>
+                      <button className="modal-close" onClick={() => setShowMore(false)} aria-label="Close"><Icon name="close" size={16} /></button>
+                    </div>
+                    <div className="more-list">
+                      {mode === 'agent' && (
+                        <label className="more-row">
+                          <span>Test after applying</span>
+                          <input type="checkbox" checked={!!testAfterApply} onChange={(e) => onTestToggle?.(e.target.checked)} />
+                        </label>
+                      )}
+                      {mode === 'agent' && (
+                        <label className="more-row">
+                          <span>Team ({getTeamMembers().length} AIs)</span>
+                          <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
+                        </label>
+                      )}
                       <label className="more-row">
-                        <span>Test after applying</span>
-                        <input type="checkbox" checked={!!testAfterApply} onChange={(e) => onTestToggle?.(e.target.checked)} />
+                        <span>Web search</span>
+                        <input type="checkbox" checked={webOn} onChange={() => { setWeb(!webOn); setWebOn(!webOn) }} />
                       </label>
-                    )}
-                    {mode === 'agent' && (
-                      <label className="more-row">
-                        <span>Team ({getTeamMembers().length} AIs)</span>
-                        <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
-                      </label>
-                    )}
-                    <label className="more-row">
-                      <span>Web search</span>
-                      <input type="checkbox" checked={webOn} onChange={() => { setWeb(!webOn); setWebOn(!webOn) }} />
-                    </label>
-                    <button className="more-row more-link" type="button" onClick={() => { setShowMore(false); setShowTeam(true) }}>
-                      <span>Team &amp; characters…</span>
-                      <Icon name="chevronRight" size={13} />
-                    </button>
+                      <button className="more-row more-link" type="button" onClick={() => { setShowMore(false); setShowTeam(true) }}>
+                        <span>Team &amp; characters…</span>
+                        <Icon name="chevronRight" size={13} />
+                      </button>
+                    </div>
                   </div>
-                </>
+                </div>,
+                document.body
               )}
             </div>
             <BehaviorSwitcher value={behavior} onChange={onBehaviorChange} disabled={streaming} compact />
@@ -703,19 +710,26 @@ setMessages((m) => {
         <div ref={messagesEndRef} />
       </div>
 
-      {offer && (
-        <div className="agent-offer" role="dialog" aria-label="Switch to agent mode">
-          <div className="agent-offer-text"><strong>Ready to start?</strong> Switch to Agent mode so I can write the files.</div>
-          <div className="agent-offer-btns">
-            <button className="agent-offer-no" onClick={() => setOffer(null)}>Cancel</button>
-            <button className="agent-offer-yes" onClick={() => {
-              const t = offer.text
-              setOffer(null)
-              setMode('agent')
-              sendAgent(`${t}\n\nStart working now on what we agreed in our conversation above.`, [], t)
-            }}>Allow</button>
+      {offer && createPortal(
+        <div className="modal-backdrop" onClick={() => setOffer(null)}>
+          <div className="modal offer-modal" role="dialog" aria-label="Switch to agent mode" onClick={(e) => e.stopPropagation()}>
+            <div className="offer-body">
+              <span className="offer-icon"><Icon name="bot" size={20} /></span>
+              <h3>Ready to start?</h3>
+              <p>Switch to Agent mode so I can write the files and start working on what we planned.</p>
+            </div>
+            <div className="offer-btns">
+              <button className="agent-offer-no" onClick={() => setOffer(null)}>Cancel</button>
+              <button className="agent-offer-yes" autoFocus onClick={() => {
+                const t = offer.text
+                setOffer(null)
+                setMode('agent')
+                sendAgent(`${t}\n\nStart working now on what we agreed in our conversation above.`, [], t)
+              }}>Allow</button>
+            </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
       {ask && <AskModal ask={ask} onAnswer={answerAsk} onSkip={() => setAsk(null)} />}
 

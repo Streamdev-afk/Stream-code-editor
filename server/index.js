@@ -1014,7 +1014,7 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req, true)}\n\nFiles that already exist in the project are listed below. Never write a file again unless this step needs to change it.`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req, true)}${req.body.strict ? '\n\n## IMPORTANT\nYour previous answer could not be read. Reply with ONLY one valid JSON object. No text before or after it, no thinking out loud. Keep every file as short as it can be while still working.' : ''}\n\nFiles that already exist in the project are listed below. Never write a file again unless this step needs to change it.`
 
   const USER = (ex
     ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`

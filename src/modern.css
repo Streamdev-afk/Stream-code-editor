@@ -1118,3 +1118,15 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .agent-offer-yes { background: var(--accent); border-color: var(--accent); color: #04130d; }
 
 .sp-input { padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg-elev, rgba(255,255,255,.05)); color: var(--text); font-size: 13.5px; }
+
+/* centered windows (rendered on the page itself so nothing can clip or trap them) */
+.more-modal { width: min(380px, 92vw); max-height: 86vh; display: flex; flex-direction: column; }
+.more-list { padding: 8px; overflow-y: auto; }
+.offer-modal { width: min(400px, 92vw); max-height: 86vh; }
+.offer-body { padding: 26px 24px 12px; text-align: center; }
+.offer-body h3 { margin: 10px 0 6px; font-size: 18px; }
+.offer-body p { margin: 0; color: var(--text-dim); font-size: 13.5px; line-height: 1.5; }
+.offer-icon { width: 44px; height: 44px; margin: 0 auto; display: grid; place-items: center; border-radius: 14px; background: var(--accent-dim); color: var(--accent-hover); }
+.offer-btns { display: flex; gap: 10px; padding: 14px 20px 20px; }
+.offer-btns button { flex: 1; padding: 11px 14px; }
+.modal-header { flex-shrink: 0; }
