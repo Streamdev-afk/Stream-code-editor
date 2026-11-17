@@ -1,4 +1,5 @@
 import { getWeb } from './web'
+import { buildAppContext, buildMemoryContext } from './appContext'
 
 // Whether the AI may pop up a question when it needs a decision (Settings → AI assistant)
 let ASK_OK = true
@@ -127,7 +128,7 @@ async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK, rules: RULES }),
+    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK, rules: RULES, appContext: buildAppContext(), memoryContext: buildMemoryContext() }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`

@@ -29,6 +29,8 @@ const parseShellRequest = (text) => {
   return m[1].split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4)
 }
 
+const GO_AHEAD = /\b(start|begin|go ahead|get going|let'?s go|do it|build it|make it|continue|proceed|implement)\b/i
+
 export default function AIChat({
   pendingRequest,
   onRequestHandled,
@@ -66,6 +68,7 @@ export default function AIChat({
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
+  const [offer, setOffer] = useState(null) // { text } - "switch to agent mode?" pop-up
   const [ask, setAsk] = useState(null) // question the AI wants answered: { question, options, multi, mode, original }
   const [showTeam, setShowTeam] = useState(false)
   const [showMore, setShowMore] = useState(false)
@@ -441,6 +444,12 @@ setMessages((m) => {
       onFirstMessage(text)
     }
 
+    // "start working" while chatting: offer to switch to agent mode instead of just replying
+    if (mode === 'chat' && messages.length >= 2 && !imgs.length && GO_AHEAD.test(text) && text.length < 120) {
+      setMessages([...messages, { role: 'user', text, time: Date.now() }])
+      setOffer({ text })
+      return
+    }
     if (mode === 'agent') sendAgent(text, imgs)
     else sendChat(text, imgs)
   }
@@ -694,6 +703,20 @@ setMessages((m) => {
         <div ref={messagesEndRef} />
       </div>
 
+      {offer && (
+        <div className="agent-offer" role="dialog" aria-label="Switch to agent mode">
+          <div className="agent-offer-text"><strong>Ready to start?</strong> Switch to Agent mode so I can write the files.</div>
+          <div className="agent-offer-btns">
+            <button className="agent-offer-no" onClick={() => setOffer(null)}>Cancel</button>
+            <button className="agent-offer-yes" onClick={() => {
+              const t = offer.text
+              setOffer(null)
+              setMode('agent')
+              sendAgent(`${t}\n\nStart working now on what we agreed in our conversation above.`, [], t)
+            }}>Allow</button>
+          </div>
+        </div>
+      )}
       {ask && <AskModal ask={ask} onAnswer={answerAsk} onSkip={() => setAsk(null)} />}
 
       <div className="chat-input-wrap">

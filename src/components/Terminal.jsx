@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { setCtx } from '../lib/appContext'
 import { createShell, runCommand, autocomplete } from '../lib/shell'
 
 export default function Terminal({ files, onFilesChange }) {
@@ -8,6 +9,7 @@ export default function Terminal({ files, onFilesChange }) {
     { type: 'info', text: '' },
   ])
   const [input, setInput] = useState('')
+  useEffect(() => { setCtx('terminal', lines.filter((l) => l.text).map((l) => (l.type === 'input' ? '$ ' : '') + l.text)) }, [lines])
   const [shell, setShell] = useState(() => createShell(files, '/'))
   const [history, setHistory] = useState([])
   const [histIndex, setHistIndex] = useState(-1)

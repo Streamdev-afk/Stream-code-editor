@@ -198,7 +198,7 @@ async function* guardedStream(params) {
       console.log(`[ai] empty reply from ${cur.model}`)
       // first empty reply: same model with a bigger budget and low reasoning; after that switch model
       if (i === 0 && /gpt-oss/.test(cur.model || '') && !cur.reasoning_format) {
-        cur = { ...cur, max_tokens: Math.min((cur.max_tokens || 4096) + 4000, 16000), reasoning_effort: 'low' }
+        cur = { ...cur, max_tokens: Math.min((cur.max_tokens || 4096) + 8000, 32000), reasoning_effort: 'low' }
         continue
       }
     } catch (err) {
@@ -221,7 +221,7 @@ async function* guardedStream(params) {
     if (!next) break
     console.log(`[ai] switching to ${next}`)
     const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = cur
-    cur = { ...rest, model: next, max_tokens: Math.min(cur.max_tokens || 4096, 8000) }
+    cur = { ...rest, model: next, max_tokens: Math.min(cur.max_tokens || 4096, 16000) }
     if (/gpt-oss/.test(next)) cur.reasoning_effort = 'low'
   }
   if (lastErr) throw lastErr
@@ -583,7 +583,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
       messages: [{ role: 'system', content: systemPrompt + (digest ? `\n\n## PROJECT OVERVIEW (a digest of every file you have access to: structure, key lines and the start of each file)\nAnswer from this. Do not claim you cannot see the files. If you need exact lines of one file, say which file and ask the user to request that specific change.\n${digest}\n` : '') + (webCtx || '') }, ...chatMessages],
       stream: true,
       temperature: 0.6,
-      max_tokens: thinking === 'ultra' ? 4096 : thinking === 'high' ? 3072 : 2048,
+      max_tokens: thinking === 'ultra' ? 8192 : thinking === 'high' ? 6144 : 4096,
       ...(images.length ? { reasoning_format: 'hidden' } : {}),
     })
     let totalChars = 0
@@ -746,7 +746,7 @@ For React:
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: thinking === 'ultra' ? 8000 : thinking === 'high' ? 6000 : 4096,
+      max_tokens: thinking === 'ultra' ? 16000 : thinking === 'high' ? 12000 : 8000,
       ...(images.length
         ? { reasoning_format: 'hidden' }
         : {
@@ -772,10 +772,18 @@ For React:
 // A character from the ION app lends its voice to the answer text. It never changes the code or the JSON format.
 
 // How and when the AI may ask the user a question (shown as a pop-up with options)
-function rulesBlock(req) {
-  const r = typeof req.body?.rules === 'string' ? req.body.rules.trim().slice(0, 6000) : ''
-  if (!r) return ''
-  return `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}`
+function rulesBlock(req, lite) {
+  const b = req.body || {}
+  const clip = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
+  const r = clip(b.rules, 6000)
+  let out = r ? `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}` : ''
+  const mem = clip(b.memoryContext, 4500)
+  if (mem) out += `\n\n${mem}`
+  if (!lite) {
+    const ctx = clip(b.appContext, 7000)
+    if (ctx) out += `\n\n## ABOUT THE EDITOR AND THE USER\n${ctx}`
+  }
+  return out
 }
 
 function askBlock(req, mode) {
@@ -891,7 +899,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
-      max_tokens: 4000,
+      max_tokens: 8000,
       ...(images.length
         ? { reasoning_format: 'hidden' }
         : {
@@ -1006,7 +1014,7 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req, true)}\n\nFiles that already exist in the project are listed below. Never write a file again unless this step needs to change it.`
 
   const USER = (ex
     ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
@@ -1027,7 +1035,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
       ],
       stream: true,
       temperature: 0.2,
-      max_tokens: 6000,
+      max_tokens: 14000,
     })
     let totalChars = 0
     for await (const chunk of stream) {

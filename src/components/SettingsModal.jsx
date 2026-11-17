@@ -178,6 +178,12 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <Row label="Project rules" hint="A file called ION.md that the AI reads before every answer. Write things it must always follow.">
               <button className="topbar-btn small" onClick={() => onOpenRules?.()}>{hasRules ? 'Open rules' : 'Create rules'}</button>
             </Row>
+            <Row label="Auto agents" hint="On big jobs (5+ files) one AI per file works at the same time, up to 8. Turn off to use only the Team mode setting.">
+              <Toggle value={settings.autoAgents !== false} onChange={(v) => set('autoAgents', v)} />
+            </Row>
+            <Row label="AI nickname" hint="What the AI should be called">
+              <input className="sp-input" style={{ width: 160 }} maxLength={24} value={settings.aiName || ''} placeholder="e.g. Nova" onChange={(e) => set('aiName', e.target.value)} />
+            </Row>
             <Row label="Team mode" hint="Several AIs build different parts at the same time">
               <Toggle value={!!settings.team} onChange={(v) => set('team', v)} />
             </Row>

@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron')
 contextBridge.exposeInMainWorld('desktop', {
   isDesktop: true,
   version: () => ipcRenderer.invoke('app-version'),
+  // sign in with GitHub or Google in a small window inside the app
+  oauth: (url) => ipcRenderer.invoke('oauth-open', url),
   // saving projects to a folder on this computer
   pickFolder: () => ipcRenderer.invoke('disk-pick'),
   saveFile: (root, rel, content) => ipcRenderer.invoke('disk-save', { root, rel, content }),

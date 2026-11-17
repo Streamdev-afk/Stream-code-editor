@@ -35,6 +35,8 @@ import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { loadTeam } from './lib/team'
 import LinkPanel from './components/LinkPanel'
 import { pendingActions, markAction, countLinks } from './lib/links'
+import { setCtx, saveCheckpoint, loadCheckpoint, clearCheckpoint } from './lib/appContext'
+import { getGitHubStatus } from './lib/github'
 import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions, setProjectRules } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
@@ -594,6 +596,20 @@ const [showLogin, setShowLogin] = useState(false)
   // project rules file: ION.md, AGENTS.md or .ionrules at the project root
   const rulesPath = ['ION.md', 'AGENTS.md', '.ionrules'].find((n) => files[n])
   useEffect(() => { setProjectRules(rulesPath ? files[rulesPath].content : '') }, [rulesPath, rulesPath && files[rulesPath]?.content])
+  // what the AI is told about the editor, the user and the logs
+  const MEM_FILE = 'ION_MEMORY.md'
+  useEffect(() => { setCtx('memory', files[MEM_FILE]?.content || '') }, [files[MEM_FILE]?.content])
+  useEffect(() => { setCtx('aiName', (settings.aiName || '').trim()) }, [settings.aiName])
+  useEffect(() => { setCtx('userName', user?.user_metadata?.full_name || user?.user_metadata?.name || (user?.email ? user.email.split('@')[0] : '')) }, [user])
+  useEffect(() => { setCtx('console', consoleMessages.map((m) => `[${m.level}] ${m.text}`)) }, [consoleMessages])
+  useEffect(() => {
+    if (!user) return
+    getGitHubStatus().then((g) => setCtx('github', { connected: !!(g.connected ?? g.linked ?? g.login ?? g.username), login: g.login || g.username || g.user || '' })).catch(() => {})
+  }, [user, showSettings])
+  useEffect(() => {
+    const c = loadCheckpoint(activeSession.id)
+    setCtx('progress', c ? `Task: ${c.prompt}\nDone: ${(c.doneTitles || []).join('; ') || 'nothing'}\nStill to do: ${(c.todoTitles || []).join('; ') || 'unknown'}\nFiles already created: ${(c.doneFiles || []).join(', ') || 'none'}` : '')
+  }, [activeSession.id, pendingPlanning])
   useEffect(() => {
     const onTest = (e) => {
       const d = e.detail || {}
@@ -1639,17 +1655,37 @@ case 'importZip': setShowImport(true); break
           let currentFiles = { ...files }
           const allAppliedOps = []
 
-          const teamOn = !!settings.team
+          // Auto agents: with 5+ files in the plan, one worker per file (max 8)
+          const totalFiles = new Set(steps.flatMap((st) => (Array.isArray(st.files) ? st.files : []))).size
+          const autoOn = settings.autoAgents !== false && totalFiles >= 5 && steps.length >= 2
+          const teamOn = !!settings.team || autoOn
           const LANE_MODELS = [settings.model, 'openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'qwen/qwen3-32b', 'openai/gpt-oss-20b']
           const team = teamOn ? await loadTeam().catch(() => []) : []
-          const N = Math.max(team.length, 2)
+          const N = autoOn ? Math.min(Math.max(totalFiles, 2), steps.length, 8) : Math.max(team.length, 2)
           const lanes = teamOn
-            ? Array.from({ length: N }, (_, k) => steps.filter((st) => (((Number(st.lane) || 1) - 1) % N) === k))
+            ? Array.from({ length: N }, (_, k) => steps.filter((st, idx) => (autoOn ? idx : ((Number(st.lane) || 1) - 1)) % N === k))
             : [steps]
+          if (autoOn) showToast(`Auto agents: ${N} AIs working at the same time`, 'ok')
+          // pick up where an earlier run stopped: steps already finished are skipped
+          const ckpt = loadCheckpoint(activeSession.id)
+          const doneIds = new Set(ckpt && ckpt.prompt === pendingPlanning.originalPrompt ? ckpt.doneIds || [] : [])
+          const doneTitles = []
+          const doneFiles = new Set(ckpt && ckpt.prompt === pendingPlanning.originalPrompt ? ckpt.doneFiles || [] : [])
+          const writeCkpt = () => saveCheckpoint(activeSession.id, {
+            prompt: pendingPlanning.originalPrompt,
+            doneIds: [...doneIds], doneFiles: [...doneFiles],
+            doneTitles: steps.filter((x) => doneIds.has(x.id)).map((x) => x.title),
+            todoTitles: steps.filter((x) => !doneIds.has(x.id)).map((x) => x.title),
+          })
           const runLane = async (steps, laneNo) => {
           const member = team[laneNo]
           for (let i = 0; i < steps.length; i++) {
             const step = steps[i]
+            if (doneIds.has(step.id) && (step.files || []).every((f) => currentFiles[f])) {
+              setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'done' }))
+              setPlanningStepLogs((s) => ({ ...s, [step.id]: '✓ Already done earlier, skipped' }))
+              continue
+            }
             if (!teamOn) setPlanningCurrentStep(i)
             setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'running' }))
             setPlanningStepLogs((s) => ({ ...s, [step.id]: `Running: ${step.title}…` }))
@@ -1728,6 +1764,9 @@ case 'importZip': setShowImport(true); break
                 setActiveFile(firstPath)
               }
 
+              doneIds.add(step.id)
+              ops.forEach((o) => doneFiles.add(o.path))
+              writeCkpt()
               setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'done' }))
               setPlanningStepLogs((s) => ({
                 ...s,
@@ -1785,6 +1824,17 @@ case 'importZip': setShowImport(true); break
 
           setPlanningRunning(false)
           setPlanningCurrentStep(-1)
+          const failed = steps.some((x) => !doneIds.has(x.id) && !x._substep)
+          if (!failed) clearCheckpoint(activeSession.id)
+          // the AI's own memory file: one line per finished job, no AI tokens needed
+          if (allAppliedOps.length) {
+            const day = new Date().toISOString().slice(0, 10)
+            const made = [...new Set(allAppliedOps.map((o) => o.path))].filter((p) => p !== MEM_FILE)
+            const line = `- ${day} ${failed ? '(unfinished) ' : ''}${String(pendingPlanning.originalPrompt || '').slice(0, 140)} → ${made.slice(0, 12).join(', ')}${made.length > 12 ? ` +${made.length - 12} more` : ''}\n`
+            const prev = currentFiles[MEM_FILE]?.content || '# ION memory\n\nThe AI keeps this file up to date. It lists what was built so it does not need to read the whole chat again.\n\n'
+            currentFiles[MEM_FILE] = { content: prev + line, language: 'markdown' }
+            setFiles({ ...currentFiles })
+          }
           reportChanges(allAppliedOps, currentFiles, pendingPlanning?.originalPrompt).catch(() => {})
 
           // Auto-close the modal after a short delay so user sees the final state

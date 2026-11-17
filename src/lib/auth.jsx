@@ -42,26 +42,24 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  const signInWithGitHub = async () => {
+  // In the desktop app the login happens in a small window and comes back here; on the web it is a normal redirect.
+  const oauth = async (provider, extra = {}) => {
     if (!supabase) return { error: new Error('Supabase not configured') }
-    return supabase.auth.signInWithOAuth({
-      provider: 'github',
-      options: {
-        redirectTo: window.location.origin,
-        scopes: 'repo read:user user:email',
-      },
-    })
+    const options = { redirectTo: window.location.origin, ...extra }
+    if (window.desktop?.oauth) {
+      const { data, error } = await supabase.auth.signInWithOAuth({ provider, options: { ...options, skipBrowserRedirect: true } })
+      if (error || !data?.url) return { error: error || new Error('Could not start sign-in') }
+      const back = await window.desktop.oauth(data.url)
+      if (!back) return { error: new Error('Sign-in was closed before it finished') }
+      window.location.replace(back) // the page reloads and finishes the login with the code in the address
+      return { data: {}, error: null }
+    }
+    return supabase.auth.signInWithOAuth({ provider, options })
   }
 
-  const signInWithGoogle = async () => {
-    if (!supabase) return { error: new Error('Supabase not configured') }
-    return supabase.auth.signInWithOAuth({
-      provider: 'google',
-      options: {
-        redirectTo: window.location.origin,
-      },
-    })
-  }
+  const signInWithGitHub = () => oauth('github', { scopes: 'repo read:user user:email' })
+
+  const signInWithGoogle = () => oauth('google')
 
   // The ION app signs people in with email + password, so Qoders accepts the same account
   const signInWithEmail = async (email, password) => {

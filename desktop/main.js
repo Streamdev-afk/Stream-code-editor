@@ -51,6 +51,31 @@ async function createWindow() {
   return win
 }
 
+// ---------- sign in with GitHub / Google inside the app ----------
+// Opens the provider's login page in a small window. When the login finishes and it heads back to the app's own
+// address, the window closes and the address (with the sign-in code) is handed back to the editor page.
+ipcMain.handle('oauth-open', (_e, url) => new Promise((resolve) => {
+  if (typeof url !== 'string' || !/^https:\/\//i.test(url)) return resolve(null)
+  const parent = BrowserWindow.getAllWindows()[0]
+  const win = new BrowserWindow({
+    width: 520, height: 720, parent, modal: !!parent, autoHideMenuBar: true, title: 'Sign in',
+    backgroundColor: '#ffffff',
+    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, partition: 'persist:oauth' },
+  })
+  // Google refuses logins from a window that calls itself "Electron", so look like a normal Chrome
+  win.webContents.setUserAgent(win.webContents.getUserAgent().replace(/\s?Electron\/\S+/, '').replace(/\s?ion-qoders-desktop\/\S+/i, ''))
+  let done = false
+  const finish = (v) => { if (done) return; done = true; resolve(v); if (!win.isDestroyed()) win.close() }
+  const watch = (e, next) => {
+    if (next.startsWith(`http://localhost:${PORT}`)) { e && e.preventDefault && e.preventDefault(); finish(next) }
+  }
+  win.webContents.on('will-redirect', watch)
+  win.webContents.on('will-navigate', watch)
+  win.webContents.setWindowOpenHandler(({ url: u }) => { win.loadURL(u); return { action: 'deny' } })
+  win.on('closed', () => finish(null))
+  win.loadURL(url)
+}))
+
 // ---------- saving projects to a folder on this computer ----------
 ipcMain.handle('app-version', () => app.getVersion())
 ipcMain.handle('disk-pick', async () => {
