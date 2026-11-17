@@ -53,7 +53,8 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    }
+    },
+    "artifactName": "ION-Qoders-${version}.${ext}"
   },
   "dependencies": {
     "electron-updater": "^6.3.9"
