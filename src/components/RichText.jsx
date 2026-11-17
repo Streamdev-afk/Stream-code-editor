@@ -85,11 +85,31 @@ export default function RichText({ text }) {
     const h = line.match(/^\s*#{1,6}\s+(.*)$/)
     if (h) { blocks.push(<div key={blocks.length} className="rt-h">{inline(h[1], 'h')}</div>); i++; continue }
     if (/^\s*>\s?/.test(line)) { blocks.push(<div key={blocks.length} className="rt-quote">{inline(line.replace(/^\s*>\s?/, ''), 'q')}</div>); i++; continue }
-    if (/^\s*(-{3,}|\*{3,})\s*$/.test(line)) { i++; continue }
+    // markdown table: a header row, a |---|---| separator row, then body rows
+    if (/\|/.test(line) && i + 1 < lines.length && /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/.test(lines[i + 1]) && /\|/.test(lines[i + 1])) {
+      const cells = (r) => r.trim().replace(/^\||\|$/g, '').split('|').map((c) => c.trim())
+      const head = cells(line)
+      const aligns = cells(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? 'center' : /-+:$/.test(c) ? 'right' : 'left'))
+      i += 2
+      const rows = []
+      while (i < lines.length && /\|/.test(lines[i]) && lines[i].trim()) rows.push(cells(lines[i++]))
+      blocks.push(
+        <div key={blocks.length} className="rt-table-wrap">
+          <table className="rt-table">
+            <thead><tr>{head.map((c, j) => <th key={j} style={{ textAlign: aligns[j] }}>{inline(c, `th${j}`)}</th>)}</tr></thead>
+            <tbody>{rows.map((r, ri) => <tr key={ri}>{head.map((_, j) => <td key={j} style={{ textAlign: aligns[j] }}>{inline(r[j] ?? '', `td${ri}-${j}`)}</td>)}</tr>)}</tbody>
+          </table>
+        </div>
+      )
+      continue
+    }
+    if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) { blocks.push(<hr key={blocks.length} className="rt-hr" />); i++; continue }
+    // a stray separator like ,---, or |---|
+    if (/^[\s|,:+-]*-{3,}[\s|,:+-]*$/.test(line)) { i++; continue }
     if (!line.trim()) { i++; continue }
     const para = [line]
     i++
-    while (i < lines.length && lines[i].trim() && !/^\s*(```|[-*•]\s|\d+[.)]\s|#{1,6}\s|>)/.test(lines[i])) para.push(lines[i++])
+    while (i < lines.length && lines[i].trim() && !/^\s*(```|[-*•]\s|\d+[.)]\s|#{1,6}\s|>|\|)/.test(lines[i])) para.push(lines[i++])
     blocks.push(<p key={blocks.length} className="rt-p">{para.map((t, j) => <span key={j}>{j > 0 && <br />}{inline(t, `p${j}`)}</span>)}</p>)
   }
   return <div className="rt">{blocks}</div>

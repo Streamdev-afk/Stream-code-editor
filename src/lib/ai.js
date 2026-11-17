@@ -1,4 +1,9 @@
 import { getWeb } from './web'
+
+// Whether the AI may pop up a question when it needs a decision (Settings → AI assistant)
+let ASK_OK = true
+export const setAskQuestions = (v) => { ASK_OK = v !== false }
+export const askQuestionsOn = () => ASK_OK
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 import { loadActivePersona } from './team'
@@ -120,7 +125,7 @@ async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, persona, web: getWeb() }),
+    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`

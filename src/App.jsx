@@ -35,7 +35,7 @@ import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
 import { loadTeam } from './lib/team'
 import LinkPanel from './components/LinkPanel'
 import { pendingActions, markAction, countLinks } from './lib/links'
-import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges } from './lib/ai'
+import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -395,6 +395,8 @@ const [showLogin, setShowLogin] = useState(false)
   }
   const runAiAction = (a) => {
     setAiActions((list) => list.filter((x) => x !== a))
+    const did = { github_push: ['github', 'Opened the GitHub push window'], github_import: ['github', 'Opened the GitHub import window'], run_preview: ['preview', 'Opened the live preview'], run_tests: ['check', 'Started an error check'] }[a.type]
+    if (did) addActivity([{ kind: did[0], title: did[1], detail: a.message || a.repo || '' }])
     if (a.type === 'github_push') { setGhHint({ message: a.message }); handleGitHubPush() }
     else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
     else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
@@ -570,13 +572,31 @@ const [showLogin, setShowLogin] = useState(false)
       return { kind: op.type === 'create_file' ? 'created' : 'rewrote', path: op.path, note: `${lines} lines`, excerpt: content.slice(0, 900) }
     })
     if (!changes.length) return
-    const factual = changes.map((c) => `• ${c.kind[0].toUpperCase() + c.kind.slice(1)} ${c.path}${c.note ? ` (${c.note})` : ''}`).join('\n')
+    const activity = changes.map((c) => ({
+      kind: c.kind,
+      title: `${c.kind[0].toUpperCase() + c.kind.slice(1)} ${c.path}`,
+      note: c.note,
+      detail: c.excerpt || '',
+    }))
     let why = ''
     try {
       why = await summarizeChanges({ originalPrompt, changes, model: settings.model, behavior: settings.behavior || 'friendly' })
     } catch { /* the factual list alone is still honest */ }
-    setMessages((m) => [...m, { role: 'assistant', text: `${why ? why + '\n\n' : ''}What changed:\n${factual}`, time: Date.now() }])
+    // The explanation shows in chat; the detailed list of what was done sits in a collapsed line under it
+    setMessages((m) => [...m, { role: 'assistant', text: why, activity, time: Date.now() }])
   }
+
+  // A collapsed "what I did" line in the chat (no message text)
+  const addActivity = (items) => setMessages((m) => [...m, { role: 'assistant', text: '', activity: items, time: Date.now() }])
+  useEffect(() => { setAskQuestions(settings.askQuestions !== false) }, [settings.askQuestions])
+  useEffect(() => {
+    const onTest = (e) => {
+      const d = e.detail || {}
+      addActivity([{ kind: d.status === 'ok' ? 'check' : 'warn', title: d.status === 'ok' ? 'Checked the project: no errors' : 'Checked the project: problems found', detail: d.summary || '' }])
+    }
+    window.addEventListener('stream-test-result', onTest)
+    return () => window.removeEventListener('stream-test-result', onTest)
+  }, [])
 
   const showToast = (msg, kind = 'info') => {
     setToast({ msg, kind })

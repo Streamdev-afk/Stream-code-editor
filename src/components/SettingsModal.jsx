@@ -172,6 +172,9 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <Row label="Test after applying" hint="Agent opens the preview after changes and fixes errors">
               <Toggle value={!!testAfterApply} onChange={(v) => onTestToggle?.(v)} />
             </Row>
+            <Row label="AI can ask me questions" hint="When it needs a decision, it pops up a question with options. Turn off and it decides by itself.">
+              <Toggle value={settings.askQuestions !== false} onChange={(v) => set('askQuestions', v)} />
+            </Row>
             <Row label="Team mode" hint="Several AIs build different parts at the same time">
               <Toggle value={!!settings.team} onChange={(v) => set('team', v)} />
             </Row>

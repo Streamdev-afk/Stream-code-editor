@@ -2,7 +2,9 @@ import Icon from './Icon'
 import RichText from './RichText'
 import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
-import { streamAgent, planTask, buildDigest, isOverviewQuestion } from '../lib/ai'
+import { streamAgent, planTask, buildDigest, isOverviewQuestion, askQuestionsOn } from '../lib/ai'
+import AskModal, { extractAsk, normalizeAsk } from './AskModal'
+import ActivityLog from './ActivityLog'
 import TeamPanel from './TeamPanel'
 import { getTeamMembers, loadActivePersona } from '../lib/team'
 import { loadSettings } from '../lib/settings'
@@ -62,6 +64,7 @@ export default function AIChat({
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
+  const [ask, setAsk] = useState(null) // question the AI wants answered: { question, options, multi, mode, original }
   const [showTeam, setShowTeam] = useState(false)
   const [showMore, setShowMore] = useState(false)
   const [images, setImages] = useState([]) // data URLs waiting to be sent (max 2)
@@ -262,17 +265,21 @@ useEffect(() => {
     }
   }
 
-  const sendAgent = async (text, imgs = []) => {
+  const sendAgent = async (text, imgs = [], shown) => {
+    const cmds = [] // terminal commands the AI ran to read your code this turn
+    const acts = (extra = []) => [...cmds.map((c) => ({ kind: 'terminal', title: 'Read your code in the terminal', detail: c })), ...extra]
     // shows which terminal command the AI is running to read your code
-    const showReading = (cmd) =>
+    const showReading = (cmd) => {
+      cmds.push(cmd)
       setMessages((m) => {
         const c = [...m]
         c[c.length - 1] = { role: 'assistant', text: `🔎 Reading: ${cmd}`, time: Date.now(), _status: true }
         return c
       })
+    }
     setMessages([
       ...messages,
-      { role: 'user', text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) },
+      { role: 'user', text: shown ?? text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) },
       { role: 'assistant', text: 'Analyzing project…', time: Date.now(), _status: true },
     ])
     setStreaming(true)
@@ -295,12 +302,24 @@ useEffect(() => {
         )
 
         const stepCount = Array.isArray(planResult.steps) ? planResult.steps.length : 0
+        const planAsk = askQuestionsOn() ? normalizeAsk(planResult.ask) : null
+        if (planAsk && !stepCount) {
+          setMessages((m) => {
+            const c = [...m]
+            c[c.length - 1] = { role: 'assistant', text: planAsk.question, time: Date.now(), ...(cmds.length ? { activity: acts() } : {}) }
+            return c
+          })
+          setAsk({ ...planAsk, mode: 'agent', original: text })
+          setStreaming(false)
+          return
+        }
         setMessages((m) => {
           const c = [...m]
           c[c.length - 1] = {
             role: 'assistant',
             text: `Here is my plan${planResult.title ? ` for "${planResult.title}"` : ''}. Nothing has been changed yet.\n\n${(planResult.steps || []).map((st, i) => `${i + 1}. ${st.title}${st.description ? ': ' + st.description : ''}`).join('\n')}\n\nCheck the steps in the window and press Execute when you are happy, or edit them first.`,
             time: Date.now(),
+            activity: acts([{ kind: 'plan', title: `Planned ${stepCount} step${stepCount === 1 ? '' : 's'}`, detail: (planResult.steps || []).map((st, i) => `${i + 1}. ${st.title}`).join('\n') }]),
           }
           return c
         })
@@ -325,6 +344,16 @@ useEffect(() => {
         }
       )
 
+      const agentAsk = askQuestionsOn() ? normalizeAsk(plan.ask) : null
+      if ((!plan.operations || plan.operations.length === 0) && agentAsk) {
+        setMessages((m) => {
+          const c = [...m]
+          c[c.length - 1] = { role: 'assistant', text: plan.explanation || agentAsk.question, time: Date.now(), ...(cmds.length ? { activity: acts() } : {}) }
+          return c
+        })
+        setAsk({ ...agentAsk, mode: 'agent', original: text })
+        return
+      }
       if (!plan.operations || plan.operations.length === 0) {
         const hasActions = Array.isArray(plan.actions) && plan.actions.length > 0
         setMessages((m) => {
@@ -333,6 +362,7 @@ useEffect(() => {
             role: 'assistant',
             text: (plan.explanation || 'No changes needed.') + (hasActions ? '\n\nWaiting for your approval below.' : ''),
             time: Date.now(),
+            ...(cmds.length ? { activity: acts() } : {}),
           }
           return c
         })
@@ -352,6 +382,7 @@ setMessages((m) => {
     role: 'assistant',
     text: `${plan.explanation}${planLines}${opsLine}`,
     time: Date.now(),
+    activity: acts([{ kind: 'plan', title: `Proposed ${plan.operations.length} file change${plan.operations.length === 1 ? '' : 's'}`, detail: plan.operations.map((o) => `${o.type === 'delete_file' ? 'delete' : o.type === 'edit_file' ? 'edit  ' : 'write '} ${o.path}`).join('\n') }]),
   }
   return c
 })
@@ -366,6 +397,24 @@ setMessages((m) => {
       setStreaming(false)
       inputRef.current?.focus()
     }
+  }
+
+  // The AI asked something in a chat reply: lift the [[ASK]] block out and open the pop-up
+  useEffect(() => {
+    if (streaming) return
+    const last = messages[messages.length - 1]
+    if (!last || last.role !== 'assistant' || last._askDone || !/\[\[ASK\]\]/.test(last.text || '')) return
+    const { text, ask: q } = extractAsk(last.text)
+    setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...last, text, _askDone: true }; return c })
+    if (q && askQuestionsOn()) setAsk({ ...q, mode: 'chat' })
+  }, [streaming, messages])
+
+  const answerAsk = (answer) => {
+    const a = ask
+    setAsk(null)
+    if (!a || !answer) return
+    if (a.mode === 'agent') sendAgent(`${a.original}\n\n(My answer to your question "${a.question}": ${answer})`, [], answer)
+    else sendChat(answer, [])
   }
 
   const send = () => {
@@ -606,6 +655,7 @@ setMessages((m) => {
                   <span className="chat-author">{isUser ? 'You' : 'Qoders'}</span>
                   <span className="chat-time">{fmtTime(msg.time || Date.now())}</span>
                 </div>
+                {(msg.text || showTyping || isUser || msg._status || !msg.activity) && (
                 <div className={`chat-text ${msg._status ? 'chat-status' : ''}`}>
                   {showTyping ? (
                     <span className="typing">
@@ -617,11 +667,13 @@ setMessages((m) => {
                     isUser || msg._status
                       ? (msg.text || (streaming && isLast ? '▍' : ''))
                       : <>
-                          <RichText text={msg.text} />
+                          <RichText text={extractAsk(msg.text).text} />
                           {streaming && isLast && <span className="rt-caret">▍</span>}
                         </>
                   )}
                 </div>
+                )}
+                {!isUser && msg.activity && <ActivityLog items={msg.activity} />}
                 {msg.imageCount > 0 && (
                   <div className="chat-image-chip">🖼 {msg.imageCount} image{msg.imageCount > 1 ? 's' : ''} attached</div>
                 )}
@@ -631,6 +683,8 @@ setMessages((m) => {
         })}
         <div ref={messagesEndRef} />
       </div>
+
+      {ask && <AskModal ask={ask} onAnswer={answerAsk} onSkip={() => setAsk(null)} />}
 
       <div className="chat-input-wrap">
         {images.length > 0 && (
