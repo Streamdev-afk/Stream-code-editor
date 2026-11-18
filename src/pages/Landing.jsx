@@ -1,5 +1,21 @@
 import { Link } from 'react-router-dom'
 import './Landing.css'
+import { useState } from 'react'
+import { detectOS, osName, inDesktopApp, startDesktopDownload } from '../lib/desktopDownload'
+
+// Shown until the visitor has opened the editor once; never inside the desktop app or on phones
+function DesktopCta() {
+  const [busy, setBusy] = useState(false)
+  let seen = false
+  try { seen = !!localStorage.getItem('qoders-seen-editor') } catch {}
+  const os = detectOS()
+  if (inDesktopApp() || seen || !os) return null
+  return (
+    <button className="landing-btn landing-btn-ghost" disabled={busy} onClick={async () => { setBusy(true); try { await startDesktopDownload() } finally { setTimeout(() => setBusy(false), 2500) } }}>
+      {busy ? 'Starting download…' : `Download for ${osName(os)}`}
+    </button>
+  )
+}
 
 export default function Landing() {
   return (
@@ -40,6 +56,7 @@ export default function Landing() {
           <Link to="/features" className="landing-btn landing-btn-ghost">
             See features
           </Link>
+          <DesktopCta />
         </div>
         <div className="landing-hero-hint">
           Free to try · No signup required · Works on any device

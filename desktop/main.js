@@ -2,6 +2,8 @@
 // files on a fixed local address so sign-in, routing and the editor behave exactly as on the web.
 const { app, BrowserWindow, shell, Menu, dialog, ipcMain } = require('electron')
 const http = require('http')
+const { spawn } = require('child_process')
+const https = require('https')
 const fs = require('fs')
 const path = require('path')
 
@@ -46,6 +48,14 @@ async function createWindow() {
   })
   win.webContents.on('will-navigate', (e, url) => {
     if (!url.startsWith(`http://localhost:${PORT}`)) { e.preventDefault(); shell.openExternal(url) }
+  })
+  // errors printed by the page of a local dev server shown in the preview (a different port than the editor itself)
+  const isDevPage = (u) => /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\]):(\d+)/.test(u || '') && !(u || '').startsWith(`http://localhost:${PORT}`) && !(u || '').startsWith(`http://127.0.0.1:${PORT}`)
+  win.webContents.on('console-message', (_e, level, message, _line, sourceId) => {
+    if (!isDevPage(sourceId) && !(level >= 2 && /Failed to load resource/.test(message) && isDevPage((message.match(/https?:\/\/\S+/) || [''])[0]))) return
+    const lv = level >= 3 ? 'error' : level === 2 ? 'warn' : 'log'
+    if (lv === 'log') return
+    try { win.webContents.send('local-console', { level: lv, text: String(message).slice(0, 600) }) } catch {}
   })
   await win.loadURL(`http://localhost:${PORT}/`)
   return win
@@ -92,6 +102,96 @@ ipcMain.handle('disk-save', async (_e, { root, rel, content }) => {
   return target
 })
 ipcMain.handle('disk-show', (_e, root) => { if (typeof root === 'string' && fs.existsSync(root)) shell.openPath(root) })
+
+// ---------- real terminal: runs commands on this computer, inside the project's folder ----------
+const runs = new Map()
+const insideRoot = (root, rel) => {
+  const base = path.resolve(root)
+  const target = path.resolve(base, rel || '.')
+  return target === base || target.startsWith(base + path.sep) ? target : null
+}
+ipcMain.handle('term-run', (e, { id, root, rel, cmd }) => new Promise((resolve) => {
+  if (typeof root !== 'string' || typeof cmd !== 'string' || !cmd.trim()) return resolve({ code: 1, error: 'bad request' })
+  const cwd = insideRoot(root, rel)
+  if (!cwd || !fs.existsSync(cwd)) return resolve({ code: 1, error: 'That folder does not exist.' })
+  const send = (chunk) => { try { e.sender.send('term-data', { id, chunk: chunk.toString('utf8') }) } catch {} }
+  const child = spawn(cmd, { cwd, shell: true, env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true })
+  runs.set(id, child)
+  child.stdout.on('data', send)
+  child.stderr.on('data', send)
+  child.on('error', (err) => { runs.delete(id); resolve({ code: 1, error: String(err.message || err) }) })
+  child.on('close', (code) => { runs.delete(id); resolve({ code: code == null ? 1 : code }) })
+}))
+ipcMain.handle('term-kill', (_e, id) => {
+  const c = runs.get(id)
+  if (!c) return false
+  if (process.platform === 'win32') spawn('taskkill', ['/pid', String(c.pid), '/T', '/F'])
+  else c.kill('SIGTERM')
+  return true
+})
+// download a file from the web straight into the project folder
+ipcMain.handle('term-download', (e, { id, root, rel, url, name }) => new Promise((resolve) => {
+  const say = (t) => { try { e.sender.send('term-data', { id, chunk: t }) } catch {} }
+  const cwd = insideRoot(root, rel)
+  if (!cwd || !fs.existsSync(cwd)) return resolve({ code: 1, error: 'That folder does not exist.' })
+  let u
+  try { u = new URL(url) } catch { return resolve({ code: 1, error: 'That is not a valid link.' }) }
+  if (!/^https?:$/.test(u.protocol)) return resolve({ code: 1, error: 'Only http and https links work.' })
+  const fetchOne = (link, hops) => {
+    const mod = link.protocol === 'http:' ? require('http') : https
+    const req = mod.get(link, { headers: { 'User-Agent': 'ion-qoders' } }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && hops < 6) {
+        res.resume()
+        return fetchOne(new URL(res.headers.location, link), hops + 1)
+      }
+      if (res.statusCode !== 200) { res.resume(); return resolve({ code: 1, error: `The server answered ${res.statusCode}.` }) }
+      const fileName = (name || decodeURIComponent(path.basename(link.pathname)) || 'download').replace(/[\\/:*?"<>|]/g, '_')
+      const target = insideRoot(root, path.join(rel || '.', fileName))
+      if (!target) return resolve({ code: 1, error: 'Bad file name.' })
+      const total = Number(res.headers['content-length']) || 0
+      let got = 0, last = 0
+      const out = fs.createWriteStream(target)
+      res.on('data', (c) => {
+        got += c.length
+        if (got > 300 * 1024 * 1024) { res.destroy(); out.destroy(); fs.unlink(target, () => {}); return resolve({ code: 1, error: 'Stopped: the file is bigger than 300 MB.' }) }
+        if (Date.now() - last > 700) { last = Date.now(); say(`\rDownloading ${fileName}: ${(got / 1048576).toFixed(1)} MB${total ? ` of ${(total / 1048576).toFixed(1)} MB` : ''}   `) }
+      })
+      res.pipe(out)
+      out.on('finish', () => { say(`\nSaved ${fileName} (${(got / 1048576).toFixed(2)} MB) in ${path.relative(path.resolve(root), path.dirname(target)) || 'the project folder'}\n`); resolve({ code: 0 }) })
+      out.on('error', (err) => resolve({ code: 1, error: String(err.message || err) }))
+    })
+    req.on('error', (err) => resolve({ code: 1, error: String(err.message || err) }))
+    req.setTimeout(30000, () => { req.destroy(); resolve({ code: 1, error: 'The download timed out.' }) })
+  }
+  fetchOne(u, 0)
+}))
+
+// text files in the project folder that changed since a moment ago (so files a command made show up in the editor)
+const SKIP_DIRS = new Set(['node_modules', '.git', 'venv', '.venv', '__pycache__', 'dist', 'build', '.next', '.cache', 'target', 'release'])
+const TEXT_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|json|html|htm|css|scss|md|txt|py|rb|go|rs|java|c|h|cpp|cs|php|sh|yml|yaml|toml|xml|svg|env|gitignore|sql|vue|svelte|ini|cfg|lock)$/i
+ipcMain.handle('term-scan', async (_e, { root, since }) => {
+  const out = {}
+  let count = 0
+  const walk = async (dir, rel) => {
+    let items
+    try { items = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { return }
+    for (const it of items) {
+      if (count >= 400) return
+      const r = rel ? `${rel}/${it.name}` : it.name
+      if (it.isDirectory()) { if (!SKIP_DIRS.has(it.name)) await walk(path.join(dir, it.name), r); continue }
+      if (!it.isFile() || !TEXT_EXT.test(it.name)) continue
+      try {
+        const full = path.join(dir, it.name)
+        const st = await fs.promises.stat(full)
+        if (st.mtimeMs < since || st.size > 300 * 1024) continue
+        out[r] = await fs.promises.readFile(full, 'utf8')
+        count++
+      } catch {}
+    }
+  }
+  if (typeof root === 'string' && fs.existsSync(root)) await walk(path.resolve(root), '')
+  return out
+})
 
 // ---------- updates (from the project's GitHub releases) ----------
 let updater = null

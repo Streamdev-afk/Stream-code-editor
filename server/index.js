@@ -496,7 +496,7 @@ WRITE CODE THAT RUNS THE FIRST TIME
 - If you are not sure about a library API or version, use the stable well-known form. If LIVE WEB RESULTS are given below, trust them over your memory.
 
 WRITE CLEAN TEXT
-- The fields "explanation", "plan", "title", "summary" and "description" are plain sentences: no markdown, no asterisks, no backticks, no emoji.
+- The field "explanation" is what the user reads in the chat: write it like a friendly developer. Short paragraphs separated by blank lines (write them as \\n\\n inside the JSON string), "- " bullet lists for several items or steps, **bold** for file names and key words, plain names for code. Never one long block of text. "plan", "title", "summary" and "description" stay short plain sentences.
 
 BE HONEST IN WHAT YOU SAY
 - The "explanation" must describe ONLY what your operations really do (which files, what they now contain or do). Never claim you tested, ran, checked, fixed or verified anything, and never mention a file, feature or fix that is not in your operations.
@@ -688,12 +688,12 @@ You respond with ONLY a JSON object:
   "explanation": "one-line summary",
   "plan": ["step 1", "step 2"],
   "operations": [
-    { "type": "create_file", "path": "src/New.jsx", "content": "..." },
-    { "type": "write_file",  "path": "src/App.jsx", "content": "..." },
+    { "type": "create_file", "path": "src/New.jsx" },
+    { "type": "write_file",  "path": "src/App.jsx" },
     { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] },
     { "type": "delete_file", "path": "src/Old.jsx" }
   ],
-  "actions": [ { "type": "github_push", "message": "Add pricing page" } ],
+  "actions": [ { "type": "github_push", "message": "Add pricing page" }, { "type": "run_command", "command": "npm install", "message": "Installs the packages package.json lists" } ],
   "ask": { "question": "...", "options": ["...", "..."], "multi": false }
 }
 "ask" is OPTIONAL: see QUESTIONS below. Leave it out unless you truly need an answer.
@@ -703,9 +703,8 @@ You respond with ONLY a JSON object:
 - github_import: the user wants to import a GitHub repo (opens the import dialog); optional "repo": "owner/name" (only if the user named it)
 - run_preview: the user wants to see the project running (opens the live preview)
 - run_tests: the user wants the project checked for errors
+- run_command: a terminal command the project needs to work, for example npm install, npm run dev, npx something, python script.py. Put the exact command in "command" (one line) and why in "message". The user chooses: run it and test, just run it, or cancel and run it themselves. Use it when files you wrote need packages installed or a script run. Never claim it ran.
 Never say you pushed, imported or ran something. Say it is waiting for their approval. If the user only asks for these actions, "operations" can be an empty list.
-
-No markdown, no fences, no prose outside JSON.
 
 ## RULES
 - Paths relative to project root ("src/App.jsx").
@@ -723,7 +722,7 @@ For React:
 - import React from 'https://esm.sh/react@18'
 - import { createRoot } from 'https://esm.sh/react-dom@18/client'
 - NEVER bare imports like import React from 'react'
-- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}`
+- JSX in .jsx files. Entry: HTML with <div id="root"></div> + <script type="module" src="main.jsx"></script>${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}${FILE_BLOCKS}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-20).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -772,6 +771,21 @@ For React:
 // A character from the ION app lends its voice to the answer text. It never changes the code or the JSON format.
 
 // How and when the AI may ask the user a question (shown as a pop-up with options)
+// File contents are NOT put inside the JSON: each file goes in its own block after it, so code needs no escaping
+const FILE_BLOCKS = `
+
+## REPLY FORMAT (strict)
+1. First one small JSON object with the explanation and the list of operations. It has NO file contents.
+2. Then, for every create_file / write_file operation, the file content in its own block, exactly like this:
+
+<<<FILE src/New.jsx>>>
+the full file content, written as normal code. No escaping, no quotes around it.
+<<<END>>>
+
+Rules: the path after FILE must match the operation's path. Always close each block with <<<END>>> on its own line. Do not wrap anything in markdown fences. The "explanation" may use simple markdown (short paragraphs, - bullet lists, **bold**). If the work is big, write fewer files and say what is left in "explanation" instead of cutting a file off.`
+
+const JSON_ONLY = '\n\n## REPLY FORMAT (strict)\nYour whole reply is exactly ONE JSON object. Start with { and end with }. No markdown fences, no text before or after, no thinking out loud. Escape newlines inside strings as \\n and quotes as \\\". If a file would be very long, split the work across fewer, shorter files instead of cutting the JSON off.'
+
 function rulesBlock(req, lite) {
   const b = req.body || {}
   const clip = (v, n) => (typeof v === 'string' ? v.trim().slice(0, n) : '')
@@ -876,7 +890,7 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}${JSON_ONLY}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -898,6 +912,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
       model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
+      ...(getByok() ? {} : { response_format: { type: 'json_object' } }), // makes the model answer with one JSON object
       temperature: 0.2,
       max_tokens: 8000,
       ...(images.length
@@ -986,8 +1001,8 @@ Respond with ONLY a JSON object:
 {
   "explanation": "one-line summary",
   "operations": [
-    { "type": "create_file", "path": "index.html", "content": "..." },
-    { "type": "write_file",  "path": "styles.css", "content": "..." },
+    { "type": "create_file", "path": "index.html" },
+    { "type": "write_file",  "path": "styles.css" },
     { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] }
   ]
 }
@@ -996,13 +1011,6 @@ Respond with ONLY a JSON object:
 - FULL file content for create_file / write_file. No snippets, no diffs.${EDIT_FILE_RULES}
 - Match existing style and language.
 - No placeholders, no "// TODO", no fake names.
-
-## JSON ESCAPING — CRITICAL
-- Newlines in content strings must be \\n (backslash-n), not literal newlines.
-- Double quotes in content strings must be \\" (backslash-quote).
-- Backslashes must be \\\\ (double backslash).
-- No trailing commas.
-- Never write literal "\\n" as text inside your generated code — it must be actual content.
 
 ## HTML + REACT RULES
 Allowed in HTML: <script type="module" src="app.jsx"></script>, plain <script src="app.js"></script>.
@@ -1014,7 +1022,7 @@ For React:
 - NEVER use bare imports.
 - JSX in .jsx files. HTML entry: <div id="root"></div> + <script type="module" src="main.jsx"></script>
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req, true)}${req.body.strict ? '\n\n## IMPORTANT\nYour previous answer could not be read. Reply with ONLY one valid JSON object. No text before or after it, no thinking out loud. Keep every file as short as it can be while still working.' : ''}\n\nFiles that already exist in the project are listed below. Never write a file again unless this step needs to change it.`
+${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req, true)}${FILE_BLOCKS}${req.body.strict ? '\n\n## IMPORTANT\nYour previous answer could not be read. Follow the REPLY FORMAT exactly: small JSON first, then one <<<FILE path>>> ... <<<END>>> block per file. No thinking out loud. Keep every file as short as it can be while still working.' : ''}\n\nFiles that already exist in the project are listed below. Never write a file again unless this step needs to change it.`
 
   const USER = (ex
     ? `Original user request: ${originalPrompt || '(unknown)'}\n\nFile index (contents are NOT shown${ex.noShell ? ', names only so you do not clash with them' : ', read what you need with the shell'}):\n${ex.index}\n${ex.obs ? `\nCommand outputs so far:\n${ex.obs}\n` : ''}`
@@ -1058,8 +1066,10 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
 // so it cannot describe work that did not happen.
 app.post('/api/agent/summarize', async (req, res) => {
   try {
-    const { originalPrompt, changes, model, behavior } = req.body || {}
-    if (!Array.isArray(changes) || !changes.length) return res.status(400).json({ error: 'changes required' })
+    const { originalPrompt, changes: rawChanges, model, behavior } = req.body || {}
+    const changes = Array.isArray(rawChanges) ? rawChanges : []
+    const failed = Array.isArray(req.body?.failed) ? req.body.failed.slice(0, 8).map((f) => String(f).slice(0, 200)) : []
+    if (!changes.length && !failed.length) return res.status(400).json({ error: 'changes required' })
     const list = changes.slice(0, 12).map((c) =>
       `- ${String(c.kind).slice(0, 12)} ${String(c.path).slice(0, 120)}${c.note ? ` (${String(c.note).slice(0, 80)})` : ''}\n${String(c.excerpt || '').slice(0, 900)}`
     ).join('\n\n')
@@ -1067,9 +1077,10 @@ app.post('/api/agent/summarize', async (req, res) => {
 Rules:
 - Use ONLY the CHANGES below. Describe what each file now does or what was changed in it. Never mention anything that is not in CHANGES.
 - Never say you ran, tested, previewed or verified anything. If something should be checked, say what to check in one short sentence.
-- 2 to 5 short sentences, plain text, no markdown, no bullet symbols, no emoji, no code blocks. Name the files in plain words.
-- Say what the user will see or can now do, not just file names.${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
-    const USER = `The user asked: ${String(originalPrompt || '(not given)').slice(0, 600)}\n\nCHANGES THAT WERE APPLIED:\n${list}`
+- Format it nicely with markdown: a short opening sentence, then a blank line, then "- " bullets (one per file or change, file names in **bold**), then a blank line and one closing sentence. Never one long block. No emoji, no code blocks.
+- Say what the user will see or can now do, not just file names.
+- If a FAILED list is given: first say what did get done, then in the same message say plainly "but I could not finish" each failed item and why, in simple words. Never say a failed item worked. End by asking if they want you to fix only that part, and tell them they can just reply "fix it". When FAILED exists you may use up to 7 sentences.${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}`
+    const USER = `The user asked: ${String(originalPrompt || '(not given)').slice(0, 600)}\n\nCHANGES THAT WERE APPLIED:\n${list || '(nothing was applied)'}${failed.length ? `\n\nFAILED (NOT done):\n${failed.map((f) => '- ' + f).join('\n')}` : ''}`
     let text = ''
     const stream = guardedStream({
       model: model || 'openai/gpt-oss-20b',

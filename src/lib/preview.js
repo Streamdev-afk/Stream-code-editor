@@ -123,6 +123,8 @@ function buildConsoleShim() {
       console.log = (...a) => { send('log', a); origLog.apply(console, a); };
       console.error = (...a) => { send('error', a); origErr.apply(console, a); };
       console.warn = (...a) => { send('warn', a); origWarn.apply(console, a); };
+      window.addEventListener('unhandledrejection', (e) => { send('error', ['Unhandled promise error: ' + ((e.reason && e.reason.message) || e.reason)]); });
+      window.addEventListener('error', (e) => { const t = e.target; if (t && t !== window && (t.src || t.href)) send('error', ['Failed to load ' + (t.src || t.href)]); }, true);
       window.onerror = (msg, src, line, col, err) => {
         send('error', [msg + ' (line ' + line + ')']);
       };

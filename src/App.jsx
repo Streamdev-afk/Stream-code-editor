@@ -387,23 +387,101 @@ const [showLogin, setShowLogin] = useState(false)
   const [pendingPlan, setPendingPlan] = useState(null)
   const [ghHint, setGhHint] = useState(null) // AI suggestions for the GitHub window (commit message / repo)
   const [aiActions, setAiActions] = useState([]) // actions the AI proposed, waiting for the user's OK
-  const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests']
+  const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests', 'run_command']
   const queueAiActions = (list) => {
     const clean = (Array.isArray(list) ? list : [])
       .filter((a) => a && ALLOWED_AI_ACTIONS.includes(a.type))
       .slice(0, 3)
-      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100) }))
+      .filter((a) => a.type !== 'run_command' || (typeof a.command === 'string' && a.command.trim() && !/[\r\n]/.test(a.command.trim())))
+      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), command: String(a.command || '').trim().slice(0, 200) }))
     if (clean.length) setAiActions(clean)
   }
   const runAiAction = (a) => {
     setAiActions((list) => list.filter((x) => x !== a))
     const did = { github_push: ['github', 'Opened the GitHub push window'], github_import: ['github', 'Opened the GitHub import window'], run_preview: ['preview', 'Opened the live preview'], run_tests: ['check', 'Started an error check'] }[a.type]
+    if (a.type === 'run_command') {
+      cmdGoal.current = a.message || cmdGoal.current
+      enqueueCommands([{ command: a.command, test: !!a.test, message: a.message }])
+      return
+    }
     if (did) addActivity([{ kind: did[0], title: did[1], detail: a.message || a.repo || '' }])
     if (a.type === 'github_push') { setGhHint({ message: a.message }); handleGitHubPush() }
     else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
     else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
     else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
   }
+  // ---- commands the AI asked for: run one after another on this computer, then check the preview, then ONE final report ----
+  const cmdQueue = useRef([])
+  const cmdResults = useRef([])
+  const cmdBusy = useRef(false)
+  const cmdAnyTest = useRef(false)
+  const cmdGoal = useRef('')
+
+  const startNextCommand = () => {
+    const next = cmdQueue.current.shift()
+    if (!next) { finishCommands(); return }
+    cmdBusy.current = true
+    cmdAnyTest.current = cmdAnyTest.current || !!next.test
+    addActivity([{ kind: 'terminal', title: `Running on your computer: ${next.command}`, detail: next.message || '' }])
+    window.__qodersPendingRun = { cmd: next.command, test: !!next.test }
+    setBottomOpen(true)
+    window.dispatchEvent(new CustomEvent('qoders-open-terminal'))
+    window.dispatchEvent(new CustomEvent('qoders-run', { detail: window.__qodersPendingRun }))
+  }
+  const enqueueCommands = (list) => {
+    if (!list.length) return
+    if (!cmdBusy.current && !cmdQueue.current.length) { cmdResults.current = []; cmdAnyTest.current = false }
+    cmdQueue.current.push(...list)
+    if (!cmdBusy.current) startNextCommand()
+  }
+  const finishCommands = async () => {
+    cmdBusy.current = false
+    const results = cmdResults.current
+    cmdResults.current = []
+    if (!results.length) return
+    // look at the preview for a few seconds and read its errors (only if the user chose "Run & test")
+    let test = null
+    let fixes = 0
+    if (cmdAnyTest.current) {
+      const h = (e) => { if (e.detail?.status === 'fix') fixes++; else test = e.detail }
+      window.addEventListener('stream-test-result', h)
+      try { await runTestLoop([], cmdGoal.current || 'Check the project works') } catch { /* reported below */ }
+      window.removeEventListener('stream-test-result', h)
+    }
+    const lines = results.map((r) => `- ${r.running ? '▶️' : '✅'} \`${r.cmd}\` ${r.running ? 'is running with no errors' : 'finished'}`)
+    let text = `Everything is done. Here is the full picture:\n\n${lines.join('\n')}`
+    if (cmdAnyTest.current) {
+      text += `\n\n**Preview check:** ${test ? (test.status === 'ok' ? `I opened ${window.__qodersLocalUrl ? 'your dev server page' : 'the preview'} and found no errors${fixes ? `, after fixing ${fixes} problem${fixes === 1 ? '' : 's'} on the way` : ''}.` : `I opened the preview and some errors are still there: ${test.summary || 'see the console'}. Tell me and I will keep fixing.`) : 'I could not read the preview this time.'}`
+    }
+    setMessages((m) => [...m, { role: 'assistant', text, time: Date.now() }])
+  }
+  const stopCommands = (reason) => { cmdQueue.current = []; cmdBusy.current = false; cmdResults.current = []; void reason }
+
+  useEffect(() => {
+    const h = (e) => {
+      const d = e.detail || {}
+      if (!cmdBusy.current) return
+      const bad = d.running ? /error|failed|cannot find|not found|exception|traceback|EADDRINUSE|ENOENT|SyntaxError/i.test(d.output) : d.code !== 0
+      if (bad) {
+        const done = cmdResults.current.map((r) => r.cmd)
+        stopCommands()
+        if (!d.test) {
+          setMessages((m) => [...m, { role: 'assistant', text: `\`${d.cmd}\` ${d.running ? 'printed errors' : `failed (exit code ${d.code})`}.${done.length ? ` Before that this worked: ${done.map((c) => `\`${c}\``).join(', ')}.` : ''} I stopped the rest. Check the terminal, or tell me to fix it.`, time: Date.now() }])
+          return
+        }
+        setPendingAi({
+          prompt: `I ran \`${d.cmd}\` in the terminal and it ${d.running ? 'printed errors' : `failed with exit code ${d.code}`}.${done.length ? ` These worked before it: ${done.join(', ')}.` : ''}\n\nTerminal output (end):\n${d.output}\n\nFind the real cause and fix it in the project files. If a package or command is missing, say so.`,
+          shown: `\`${d.cmd}\` had problems, please fix them`,
+        })
+        setMobileView('ai')
+        return
+      }
+      cmdResults.current.push({ cmd: d.cmd, running: !!d.running })
+      startNextCommand()
+    }
+    window.addEventListener('qoders-run-done', h)
+    return () => window.removeEventListener('qoders-run-done', h)
+  })
   const [toast, setToast] = useState(null)
   const [inputModal, setInputModal] = useState(null)
 
@@ -449,9 +527,30 @@ const [showLogin, setShowLogin] = useState(false)
     [activeFile, files]
   )
 
+  const consoleRef = useRef([])
+  useEffect(() => { try { localStorage.setItem('qoders-seen-editor', '1') } catch {} }, []) // the landing page stops offering the desktop download after the first visit
+  // errors from the dev server's page (sent by the desktop app)
+  useEffect(() => {
+    if (!window.desktop?.onLocalConsole) return
+    return window.desktop.onLocalConsole((m) => handleConsoleMessage({ level: m.level, text: `[local] ${m.text}` }))
+  }, [])
+  const filesLiveRef = useRef(files)
+  filesLiveRef.current = files // always the newest files, even when a test starts from an old closure
+  useEffect(() => { consoleRef.current = consoleMessages }, [consoleMessages])
+  // The test needs the inline preview on screen so its errors can be read; the view goes back afterwards
   const runTestLoop = async (appliedOps, originalPrompt) => {
+    const prevView = viewMode
+    if (prevView !== 'preview') setViewMode('preview')
+    try {
+      await runTestLoopInner(appliedOps, originalPrompt)
+    } finally {
+      if (prevView !== 'preview') setViewMode(prevView)
+    }
+  }
+  const runTestLoopInner = async (appliedOps, originalPrompt) => {
   const maxAttempts = 3
-  let currentFiles = { ...files }
+  await new Promise((r) => setTimeout(r, 250))
+  let currentFiles = { ...filesLiveRef.current }
 
   // Apply already happened before we got here, so files reflect the change
   // Wait a moment for React to flush
@@ -461,24 +560,31 @@ const [showLogin, setShowLogin] = useState(false)
     setTestProgress({ step: 'sync', message: `Testing (attempt ${attempt})…`, attempt })
 
     // Sync latest files to preview session
-    let sessionId = getSessionId()
-    sessionId = await syncPreview(currentFiles, activeFile)
-    if (!sessionId) {
-      setTestProgress({ done: true, status: 'ok', summary: 'No preview session — skipped.' })
-      return
+    const attemptStart = Date.now()
+    // a dev server is running: look at its page, not at the plain inline preview
+    if (window.__qodersLocalUrl) {
+      window.dispatchEvent(new CustomEvent('qoders-preview-mode', { detail: { mode: 'local' } }))
+      window.dispatchEvent(new CustomEvent('qoders-preview-reload'))
     }
+    let sessionId = getSessionId()
+    try { sessionId = await syncPreview(currentFiles, activeFile) } catch { sessionId = null }
+    // (the Live URL session is optional: the inline preview's own console is read below)
 
     // Clear old errors
-    await clearPreviewErrors(sessionId)
+    if (sessionId) await clearPreviewErrors(sessionId).catch(() => {})
 
     // Wait for preview to reload and errors to report (frontend opens it via iframe)
     // Trigger a reload by incrementing a counter — but the Live URL iframe is separate.
     // Simpler: we just wait and then read whatever errors landed.
     setTestProgress({ step: 'wait', message: 'Waiting for preview console…', attempt })
-    await new Promise((r) => setTimeout(r, 2000))
+    await new Promise((r) => setTimeout(r, 3200))
 
-    // Fetch errors
-    const errors = await fetchPreviewErrors(sessionId)
+    // Fetch errors: from the Live URL session and from the inline preview that is on screen
+    const liveErrors = sessionId ? await fetchPreviewErrors(sessionId).catch(() => []) : []
+    const inlineErrors = consoleRef.current
+      .filter((m) => (m.t || 0) >= attemptStart - 200 && (m.level === 'error' || m.level === 'warn'))
+      .map((m) => ({ level: m.level, text: m.text }))
+    const errors = [...liveErrors, ...inlineErrors].filter((e, i, a) => a.findIndex((x) => x.text === e.text) === i).slice(0, 30)
     setTestProgress({ step: 'diagnose', message: `Analyzing ${errors.length} console message(s)…`, attempt })
 
     // Ask the AI to diagnose
@@ -561,7 +667,7 @@ const [showLogin, setShowLogin] = useState(false)
 }, [isMobile])
 
   // After changes are really applied: say what changed (from the real files), then explain it.
-  const reportChanges = async (ops, finalFiles, originalPrompt) => {
+  const reportChanges = async (ops, finalFiles, originalPrompt, failures = []) => {
     const seen = new Map()
     for (const op of ops) seen.set(op.path, op) // last operation per file wins
     const changes = [...seen.values()].map((op) => {
@@ -575,7 +681,7 @@ const [showLogin, setShowLogin] = useState(false)
       }
       return { kind: op.type === 'create_file' ? 'created' : 'rewrote', path: op.path, note: `${lines} lines`, excerpt: content.slice(0, 900) }
     })
-    if (!changes.length) return
+    if (!changes.length && !failures.length) return
     const activity = changes.map((c) => ({
       kind: c.kind,
       title: `${c.kind[0].toUpperCase() + c.kind.slice(1)} ${c.path}`,
@@ -584,10 +690,20 @@ const [showLogin, setShowLogin] = useState(false)
     }))
     let why = ''
     try {
-      why = await summarizeChanges({ originalPrompt, changes, model: settings.model, behavior: settings.behavior || 'friendly' })
+      why = await summarizeChanges({ originalPrompt, changes, model: settings.model, behavior: settings.behavior || 'friendly', failed: failures.map((f) => `${f.title}: ${f.error}`) })
     } catch { /* the factual list alone is still honest */ }
+    // if the explanation could not be written, still say honestly what failed, in the same message
+    if (failures.length && !why) why = `${changes.length ? 'Most of it is done, ' : ''}but I could not finish: ${failures.map((f) => f.title).join(', ')}. Do you want me to fix ${failures.length === 1 ? 'it' : 'them'}? Just reply "fix it".`
     // The explanation shows in chat; the detailed list of what was done sits in a collapsed line under it
     setMessages((m) => [...m, { role: 'assistant', text: why, activity, time: Date.now() }])
+  }
+
+  // "fix it": run again only the steps that failed last time
+  const fixFailed = () => {
+    const c = loadCheckpoint(activeSession.id)
+    if (!c || !c.failedSteps || !c.failedSteps.length) return false
+    setPendingPlanning({ plan: { steps: c.failedSteps }, originalPrompt: c.prompt, autoStart: true })
+    return true
   }
 
   // A collapsed "what I did" line in the chat (no message text)
@@ -1048,7 +1164,7 @@ const restoreSnapshot = (entry) => {
 
   // Console message handler from preview
   const handleConsoleMessage = (msg) => {
-    setConsoleMessages((m) => [...m.slice(-199), msg])
+    setConsoleMessages((m) => [...m.slice(-199), { ...msg, t: Date.now() }])
   }
 
     // ---------- File management ----------
@@ -1457,6 +1573,7 @@ case 'importZip': setShowImport(true); break
     }
     ai={
       <AIChat
+        onFixFailed={fixFailed}
         pendingRequest={pendingAi}
         onRequestHandled={() => setPendingAi(null)}
         code={activeContent}
@@ -1495,6 +1612,7 @@ case 'importZip': setShowImport(true); break
     }
     terminal={
       <BottomPanel
+        projectId={activeSession.id}
         open
         onClose={() => setMobileView('editor')}
         consoleMessages={consoleMessages}
@@ -1592,6 +1710,7 @@ case 'importZip': setShowImport(true); break
     </div>
     {showAI && (
       <AIChat
+        onFixFailed={fixFailed}
         pendingRequest={pendingAi}
         onRequestHandled={() => setPendingAi(null)}
         code={activeContent}
@@ -1633,6 +1752,7 @@ case 'importZip': setShowImport(true); break
 
  <PlanningModal
         plan={pendingPlanning?.plan}
+        autoStart={!!pendingPlanning?.autoStart}
         stepStatuses={planningStepStatuses}
         stepLogs={planningStepLogs}
         running={planningRunning}
@@ -1677,6 +1797,7 @@ case 'importZip': setShowImport(true); break
             doneTitles: steps.filter((x) => doneIds.has(x.id)).map((x) => x.title),
             todoTitles: steps.filter((x) => !doneIds.has(x.id)).map((x) => x.title),
             failed: failures.map((f) => `${f.title} (${f.error})`),
+            failedSteps: failures.map((f) => f.step).filter(Boolean),
           })
           const runLane = async (steps, laneNo) => {
           const member = team[laneNo]
@@ -1815,7 +1936,7 @@ case 'importZip': setShowImport(true); break
                 continue
               }
 
-              failures.push({ title: step.title, error: String(err.message || err).slice(0, 140) })
+              failures.push({ title: step.title, error: String(err.message || err).slice(0, 140), step: { id: step.id, title: step.title, description: step.description, files: step.files } })
               writeCkpt()
               setPlanningStepStatuses((s) => ({ ...s, [step.id]: 'error' }))
               setPlanningStepLogs((s) => ({ ...s, [step.id]: `✕ ${err.message}` }))
@@ -1831,14 +1952,6 @@ case 'importZip': setShowImport(true); break
           const failed = steps.some((x) => !doneIds.has(x.id) && !x._substep)
           if (!failed && !failures.length) clearCheckpoint(activeSession.id)
           else writeCkpt()
-          // tell the AI (and the user) plainly which steps did not work, so nothing is reported as done by mistake
-          if (failures.length) {
-            setMessages((m) => [...m, {
-              role: 'assistant',
-              time: Date.now(),
-              text: `⚠️ ${failures.length === 1 ? 'One step' : failures.length + ' steps'} did NOT finish, so nothing from ${failures.length === 1 ? 'it' : 'them'} was added:\n\n${failures.map((f) => `- ${f.title}: ${f.error}`).join('\n')}\n\nThe rest was applied. Do you want me to fix ${failures.length === 1 ? 'it' : 'them'} and continue? Just say "yes" or "continue".`,
-            }])
-          }
           // the AI's own memory file: one line per finished job, no AI tokens needed
           if (allAppliedOps.length) {
             const day = new Date().toISOString().slice(0, 10)
@@ -1848,7 +1961,11 @@ case 'importZip': setShowImport(true); break
             currentFiles[MEM_FILE] = { content: prev + line, language: 'markdown' }
             setFiles({ ...currentFiles })
           }
-          reportChanges(allAppliedOps, currentFiles, pendingPlanning?.originalPrompt).catch(() => {})
+          reportChanges(allAppliedOps, currentFiles, pendingPlanning?.originalPrompt, failures).catch(() => {})
+          if (testAfterApply && allAppliedOps.length && !failures.length) {
+            const p0 = pendingPlanning?.originalPrompt
+            setTimeout(() => runTestLoop(allAppliedOps, p0).catch((err) => setTestProgress({ done: true, status: 'warn', summary: err.message })), 1500)
+          }
 
           // Auto-close the modal after a short delay so user sees the final state
           const allDone = steps.every((s) => planningStepStatuses[s.id] !== 'error')
@@ -1870,6 +1987,7 @@ case 'importZip': setShowImport(true); break
 
 
       {!isMobile && <BottomPanel
+        projectId={activeSession.id}
         open={bottomOpen}
         onClose={() => setBottomOpen(false)}
         consoleMessages={consoleMessages}
@@ -1966,7 +2084,7 @@ case 'importZip': setShowImport(true); break
       )}
 
       {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
-        <ActionCard actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />
+        <ActionCard canRun={!!window.desktop?.termRun} actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />
       )}
 
       {linkActions.length > 0 && !pendingPlan && !pendingPlanning && aiActions.length === 0 && (

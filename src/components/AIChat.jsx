@@ -30,9 +30,11 @@ const parseShellRequest = (text) => {
   return m[1].split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4)
 }
 
+const FIX_IT = /^\s*(yes|yeah|yep|ok(ay)?|sure|please|fix( it| them| that)?|try again|retry|continue|go ahead|do it|yes please)[\s.!]*$/i
 const GO_AHEAD = /\b(start|begin|go ahead|get going|let'?s go|do it|build it|make it|continue|proceed|implement)\b/i
 
 export default function AIChat({
+  onFixFailed,
   pendingRequest,
   onRequestHandled,
   code,
@@ -91,6 +93,42 @@ export default function AIChat({
   const messages = messagesProp ?? localMessages
   const setMessages = setMessagesProp ?? setLocalMessages
   const [input, setInput] = useState('')
+  const [copiedIdx, setCopiedIdx] = useState(-1)
+  const [listening, setListening] = useState(false)
+  const recogRef = useRef(null)
+  const [resendTick, setResendTick] = useState(0)
+  const SpeechAPI = typeof window !== 'undefined' && !window.desktop?.isDesktop ? (window.SpeechRecognition || window.webkitSpeechRecognition) : null
+
+  const copyMsg = async (text, i) => {
+    try { await navigator.clipboard.writeText(text || '') } catch {
+      const t = document.createElement('textarea'); t.value = text || ''; document.body.appendChild(t); t.select(); try { document.execCommand('copy') } catch {} t.remove()
+    }
+    setCopiedIdx(i); setTimeout(() => setCopiedIdx(-1), 1400)
+  }
+  const resend = (text) => { if (streaming) return; setInput(text); setResendTick((n) => n + 1) }
+  // runs after the box has been filled by "resend"
+  useEffect(() => { if (resendTick) send() }, [resendTick])
+
+  // voice to text (browser speech recognition; not available in the desktop app)
+  const toggleMic = () => {
+    if (!SpeechAPI) return
+    if (listening) { recogRef.current?.stop(); return }
+    const r = new SpeechAPI()
+    r.lang = navigator.language || 'en-US'
+    r.interimResults = false
+    r.continuous = true
+    let base = input
+    r.onresult = (e) => {
+      let add = ''
+      for (let k = e.resultIndex; k < e.results.length; k++) if (e.results[k].isFinal) add += e.results[k][0].transcript
+      if (add) { base = (base ? base.replace(/\s*$/, ' ') : '') + add.trim(); setInput(base) }
+    }
+    r.onend = () => setListening(false)
+    r.onerror = () => setListening(false)
+    recogRef.current = r
+    setListening(true)
+    try { r.start() } catch { setListening(false) }
+  }
   const [streaming, setStreaming] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -445,6 +483,11 @@ setMessages((m) => {
       onFirstMessage(text)
     }
 
+    // after a failed step: a short yes / "fix it" re-runs only the failed steps
+    if (onFixFailed && FIX_IT.test(text) && onFixFailed()) {
+      setMessages([...messages, { role: 'user', text, time: Date.now() }, { role: 'assistant', text: 'On it. I will redo only the part that failed.', time: Date.now() }])
+      return
+    }
     // "start working" while chatting: offer to switch to agent mode instead of just replying
     if (mode === 'chat' && messages.length >= 2 && !imgs.length && GO_AHEAD.test(text) && text.length < 120) {
       setMessages([...messages, { role: 'user', text, time: Date.now() }])
@@ -699,6 +742,18 @@ setMessages((m) => {
                   )}
                 </div>
                 )}
+                {msg.text && !msg._status && !(streaming && isLast) && (
+                  <div className="msg-actions">
+                    <button className="msg-act" onClick={() => copyMsg(extractAsk(msg.text).text, i)} title="Copy">
+                      <Icon name="copy" size={12} /> {copiedIdx === i ? 'Copied' : 'Copy'}
+                    </button>
+                    {isUser && !streaming && (
+                      <button className="msg-act" onClick={() => resend(msg.text)} title="Send this message again">
+                        <Icon name="refresh" size={12} /> Resend
+                      </button>
+                    )}
+                  </div>
+                )}
                 {!isUser && msg.activity && <ActivityLog items={msg.activity} />}
                 {msg.imageCount > 0 && (
                   <div className="chat-image-chip">🖼 {msg.imageCount} image{msg.imageCount > 1 ? 's' : ''} attached</div>
@@ -809,6 +864,18 @@ setMessages((m) => {
                 onClick={() => { setWeb(!webOn); setWebOn(!webOn) }}
                 disabled={streaming}
               ><Icon name="globe" size={15} /></button>
+              {SpeechAPI && (
+                <button
+                  className={`composer-icon ${listening ? 'mic-on' : ''}`}
+                  title={listening ? 'Listening… click to stop' : 'Talk instead of typing'}
+                  onClick={toggleMic}
+                  disabled={streaming}
+                >
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 11a7 7 0 0 0 14 0M12 18v3" />
+                  </svg>
+                </button>
+              )}
               <ModelSwitcher value={model} onChange={onModelChange} disabled={streaming} compact up />
               <ThinkingSwitcher value={thinking} onChange={onThinkingChange} disabled={streaming} compact up />
             </div>

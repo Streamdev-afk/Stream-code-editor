@@ -177,7 +177,7 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
 
   const parse = (full, streamError) => {
     try {
-      return extractJSONLocal(full)
+      return extractReply(full)
     } catch {
       console.error(`${kind} raw output:`, full)
       // the server told us why it stopped (rate limit, model error...): show that, not "invalid JSON"
@@ -262,6 +262,52 @@ export async function executeStep(args, onChunk, onStatus) {
 // Helpers the chat panel uses to read the project the same way
 export const shouldExplore = (files) => projectChars(files) > SMALL_PROJECT_CHARS
 export { buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS }
+
+// Reads a reply that is a small JSON object plus <<<FILE path>>> ... <<<END>>> blocks (old replies with
+// content inside the JSON still work). A file block that was cut off is dropped and reported, never half-written.
+function extractReply(full) {
+  const blocks = []
+  let cut = null
+  const re = /<<<FILE[ \t]+([^\r\n>]+?)[ \t]*>>>\r?\n?([\s\S]*?)(?:\r?\n)?<<<END>>>/g
+  let rest = String(full || '').replace(re, (_m, path, body) => {
+    blocks.push({ path: path.trim().replace(/^\.?\//, ''), content: stripFence(body) })
+    return ''
+  })
+  const open = rest.indexOf('<<<FILE')
+  if (open !== -1) {
+    const m = rest.slice(open).match(/^<<<FILE[ \t]+([^\r\n>]+?)[ \t]*>>>/)
+    cut = m ? m[1].trim() : 'a file'
+    rest = rest.slice(0, open)
+  }
+  let parsed
+  try {
+    parsed = extractJSONLocal(rest)
+  } catch (e) {
+    if (!blocks.length) throw e
+    parsed = { explanation: '', operations: [] }
+  }
+  const ops = Array.isArray(parsed.operations) ? parsed.operations : []
+  const byPath = new Map(blocks.map((b) => [b.path, b.content]))
+  for (const op of ops) {
+    if (op && (op.type === 'create_file' || op.type === 'write_file') && op.content == null && byPath.has(op.path)) {
+      op.content = byPath.get(op.path)
+      byPath.delete(op.path)
+    }
+  }
+  // files that came as blocks without being listed in the JSON are still files to write
+  for (const [path, content] of byPath) ops.push({ type: 'create_file', path, content })
+  parsed.operations = ops.filter((op) => !((op?.type === 'create_file' || op?.type === 'write_file') && op.content == null))
+  if (cut) {
+    if (!parsed.operations.length) throw Object.assign(new Error('cut off'), { cutOff: true })
+    parsed.explanation = `${parsed.explanation || ''}\n\nNote: ${cut} was cut off because the answer got too long, so it was not written. Ask me to do ${cut} again.`.trim()
+  }
+  return parsed
+}
+
+const stripFence = (t) => {
+  const m = String(t).match(/^\s*```[\w-]*\r?\n([\s\S]*?)\r?\n```\s*$/)
+  return m ? m[1] : String(t)
+}
 
 function extractJSONLocal(str) {
   let s = str.trim()
@@ -509,12 +555,12 @@ export function isOverviewQuestion(text) {
 
 
 // Asks the server for a short plain explanation of changes that were really applied.
-export async function summarizeChanges({ originalPrompt, changes, model, behavior }) {
+export async function summarizeChanges({ originalPrompt, changes, model, behavior, failed = [] }) {
   const persona = await loadActivePersona().catch(() => '')
   const res = await apiFetch(`${API_BASE}/api/agent/summarize`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ originalPrompt, changes, model, behavior, persona }),
+    body: JSON.stringify({ originalPrompt, changes, model, behavior, persona, failed }),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   const j = await res.json()

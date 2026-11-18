@@ -18,6 +18,7 @@ export default function PlanningModal({
   running = false,
   currentStepIndex = -1,
   errorMessage = null,
+  autoStart = false,
 }) {
   const [editedSteps, setEditedSteps] = useState(() =>
     (plan?.steps || []).map((s) => ({ ...s, enabled: true }))
@@ -28,6 +29,12 @@ export default function PlanningModal({
       setEditedSteps(plan.steps.map((s) => ({ ...s, enabled: true })))
     }
   }, [plan])
+
+  // "fix it": start straight away, no extra click
+  useEffect(() => {
+    if (autoStart && plan?.steps?.length && !running) onApprove(plan.steps.map((st) => ({ ...st, enabled: true })))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [plan, autoStart])
 
   if (!plan) return null
 

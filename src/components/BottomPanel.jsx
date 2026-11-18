@@ -8,9 +8,14 @@ const TABS = [
   { id: 'problems', label: 'Problems', icon: '⚠' },
   { id: 'debug',    label: 'Debug',    icon: '🐞' },
 ]
-export default function BottomPanel({ open, onClose, consoleMessages, files, onFilesChange }) {
+export default function BottomPanel({ open, onClose, consoleMessages, files, onFilesChange, projectId }) {
   const [activeTab, setActiveTab] = useState('output')
   const [cleared, setCleared] = useState(false)
+  useEffect(() => {
+    const h = () => setActiveTab('terminal')
+    window.addEventListener('qoders-open-terminal', h)
+    return () => window.removeEventListener('qoders-open-terminal', h)
+  }, [])
   const outputEndRef = useRef(null)
 
   const messages = cleared ? [] : (consoleMessages || [])
@@ -89,7 +94,7 @@ export default function BottomPanel({ open, onClose, consoleMessages, files, onF
             </div>
           )
         ) : activeTab === 'terminal' ? (
-  <Terminal files={files} onFilesChange={onFilesChange} />
+  <Terminal files={files} onFilesChange={onFilesChange} projectId={projectId} />
 ) : activeTab === 'problems' ? (
           <div className="bottom-placeholder">
             <div className="placeholder-icon">⚠</div>

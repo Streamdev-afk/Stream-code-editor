@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { apiFetch } from '../lib/supabase'
 import { API_BASE } from '../lib/api'
 import Icon from './Icon'
+import { detectOS, osName, inDesktopApp, startDesktopDownload } from '../lib/desktopDownload'
 import { getWeb, setWeb } from '../lib/web'
 import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
@@ -336,6 +337,13 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
           <div className="settings-about-desc">An AI code editor. Built from scratch.</div>
           {appVersion && <div className="sp-version">Desktop app version {appVersion}</div>}
         </div>
+        {!inDesktopApp() && detectOS() && (
+          <div className="sp-card">
+            <div className="sp-card-title">Get the desktop app</div>
+            <p className="settings-row-hint" style={{ margin: '0 0 12px' }}>Run npm, npx and Python for real on your computer, save projects straight to a folder, preview your dev server and sign in without leaving the app.</p>
+            <button className="topbar-btn" onClick={() => startDesktopDownload()}><Icon name="download" size={14} /> Download for {osName(detectOS())}</button>
+          </div>
+        )}
         {window.desktop?.checkUpdate && (
           <div className="sp-card">
             <div className="sp-card-title">Desktop updates</div>

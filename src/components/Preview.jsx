@@ -5,7 +5,21 @@ import { API_BASE } from '../lib/api'
 
 export default function Preview({ files, activeFile, onConsoleMessage, sessionId, onAskAI }) {
   const [key, setKey] = useState(0)
-  const [mode, setMode] = useState('inline') // 'inline' | 'url'
+  const [mode, setMode] = useState(() => (typeof window !== 'undefined' && window.desktop?.isDesktop && window.__qodersLocalUrl ? 'local' : 'inline')) // 'inline' | 'url' | 'local'
+  const [localUrl, setLocalUrl] = useState(() => (typeof window !== 'undefined' && window.desktop?.isDesktop ? window.__qodersLocalUrl || '' : ''))
+  useEffect(() => {
+    const onUrl = (e) => { setLocalUrl(e.detail.url); setMode('local'); setKey((k) => k + 1) }
+    const onMode = (e) => { if (e.detail?.mode) setMode(e.detail.mode) }
+    const onReload = () => setKey((k) => k + 1)
+    window.addEventListener('qoders-local-url', onUrl)
+    window.addEventListener('qoders-preview-mode', onMode)
+    window.addEventListener('qoders-preview-reload', onReload)
+    return () => {
+      window.removeEventListener('qoders-local-url', onUrl)
+      window.removeEventListener('qoders-preview-mode', onMode)
+      window.removeEventListener('qoders-preview-reload', onReload)
+    }
+  }, [])
   const iframeRef = useRef(null)
   const [copied, setCopied] = useState(false)
   const [picking, setPicking] = useState(false)
@@ -89,7 +103,20 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
             disabled={!previewUrl}
             title={previewUrl ? 'Live URL mode' : 'Waiting for session…'}
           >Live URL</button>
+          {localUrl && (
+            <button
+              className={`preview-mode-btn ${mode === 'local' ? 'active' : ''}`}
+              onClick={() => setMode('local')}
+              title={`Your dev server on this computer: ${localUrl}`}
+            >Local</button>
+          )}
         </div>
+        {mode === 'local' && localUrl && (
+          <div className="preview-url-bar">
+            <span className="preview-url-text" title={localUrl}>{localUrl}</span>
+            <a className="topbar-btn small" href={localUrl} target="_blank" rel="noreferrer"><Icon name="external" size={13} /> Open</a>
+          </div>
+        )}
 
         {mode === 'inline' && (
           <span className="preview-label">
@@ -128,7 +155,12 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
         </div>
       </div>
 
-      {mode === 'inline' ? (
+      {mode === 'local' && localUrl ? (
+        <div className="preview-url-frame-wrap">
+          <iframe key={key} className="preview-frame" title="Local server" src={localUrl} />
+          <div className="preview-url-note">Your dev server, running on this computer. Errors it shows are sent to the AI.</div>
+        </div>
+      ) : mode === 'inline' ? (
         <iframe
           key={key}
           ref={iframeRef}
