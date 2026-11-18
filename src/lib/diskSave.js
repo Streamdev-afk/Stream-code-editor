@@ -25,6 +25,36 @@ async function idbSet(k, v) {
   return new Promise((res) => { const t = db.transaction('h', 'readwrite'); t.objectStore('h').put(v, k); t.oncomplete = () => res() })
 }
 
+// ---- where the project lives inside the chosen folder ----
+// The chosen folder is a workspace. Each project gets its own folder inside it, so the project never mixes with
+// other files of yours. If the editor's files already sit in one main folder, that folder is the project folder.
+const layouts = {}
+const slug = (t) => String(t || 'project').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'project'
+export function noteLayout(pid, files, title) {
+  const paths = Object.keys(files || {}).filter((p) => typeof files[p]?.content === 'string' && !/^ION_MEMORY\.md$/.test(p))
+  let direct = false
+  try { direct = localStorage.getItem(`ion-disk-direct:${pid}`) === '1' } catch {}
+  if (direct) { layouts[pid] = { savePrefix: '', dirName: '', importPrefix: '' }; return layouts[pid] }
+  const tops = new Set(paths.map((p) => (p.includes('/') ? p.split('/')[0] : null)))
+  if (paths.length && !tops.has(null) && tops.size === 1) {
+    const top = [...tops][0]
+    layouts[pid] = { savePrefix: '', dirName: top, importPrefix: `${top}/` }
+  } else {
+    const name = slug(title)
+    layouts[pid] = { savePrefix: `${name}/`, dirName: name, importPrefix: '' }
+  }
+  return layouts[pid]
+}
+export const layoutFor = (pid) => layouts[pid] || { savePrefix: '', dirName: '', importPrefix: '' }
+export const setDirectFolder = (pid, on) => { try { on ? localStorage.setItem(`ion-disk-direct:${pid}`, '1') : localStorage.removeItem(`ion-disk-direct:${pid}`) } catch {} }
+const joinPath = (a, b) => (b ? `${a}${/\\/.test(a) ? '\\' : '/'}${b}` : a)
+/** Full path of the project folder on this computer (desktop). */
+export async function projectFolderPath(pid) {
+  const l = await linkedFolder(pid)
+  if (!l?.path) return null
+  return joinPath(l.path, layoutFor(pid).dirName)
+}
+
 const lastName = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || String(p)
 
 /** Name of the linked folder for this project, or null. */
@@ -74,8 +104,9 @@ function download(rel, content) {
  * Writes one file. Returns { ok, where } where `where` says what happened:
  * 'folder' (saved in the linked folder), 'download' (browser fallback), or null on failure.
  */
-export async function saveToDisk(pid, rel, content, { askFolder = true } = {}) {
+export async function saveToDisk(pid, relIn, content, { askFolder = true } = {}) {
   if (typeof content !== 'string') return { ok: false, where: null }
+  const rel = layoutFor(pid).savePrefix + relIn
   try {
     if (isDesktopApp()) {
       let link = await linkedFolder(pid)

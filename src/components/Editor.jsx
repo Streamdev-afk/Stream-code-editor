@@ -215,7 +215,7 @@ const Editor = forwardRef(function Editor(
         cursorBlinking: settings?.smoothScrolling ? 'smooth' : 'blink',
         cursorSmoothCaretAnimation: settings?.smoothScrolling ? 'on' : 'off',
         padding: { top: 16, bottom: 16 },
-        renderLineHighlight: 'line',
+        renderLineHighlight: 'none',
         roundedSelection: true,
         guides: { indentation: settings?.indentGuides !== false, bracketPairs: false },
         bracketPairColorization: { enabled: settings?.bracketColors !== false },

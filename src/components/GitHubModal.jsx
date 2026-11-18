@@ -15,6 +15,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
   const readLinks = () => { try { return JSON.parse(localStorage.getItem(linkKey) || '[]') } catch { return [] } }
   const [links, setLinks] = useState(readLinks)
   const [target, setTarget] = useState(null) // { owner, repo } of an existing repo
+  const [tab, setTab] = useState(hint?.newRepo ? 'new' : 'existing') // 'existing' | 'new'
   const [pushRepos, setPushRepos] = useState(null)
   const [pushSearch, setPushSearch] = useState('')
 
@@ -30,16 +31,19 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
         .replace(/[^a-z0-9._-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 50)
-      setRepoName(slug || 'stream-project')
+      const aiName = String(hint?.repo || '').replace(/[^a-zA-Z0-9._-]/g, '-').slice(0, 60)
+      setRepoName(aiName || slug || 'stream-project')
       ;(async () => {
         try {
           const list = await listUserRepos()
           setPushRepos(list)
-          const first = readLinks()[0]
-          if (first && list.find((r) => r.fullName === first)) {
-            const [o, n] = first.split('/')
+          // already connected repo(s): exactly one is used straight away, with more than one you pick
+          const linked = readLinks().filter((l) => list.find((r) => r.fullName === l))
+          if (!hint?.newRepo && linked.length === 1) {
+            const [o, n] = linked[0].split('/')
             setTarget({ owner: o, repo: n })
           }
+          if (!hint?.newRepo && linked.length === 0 && list.length === 0) setTab('new')
         } catch { setPushRepos([]) }
       })()
     } else {
@@ -64,7 +68,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
   }, [mode, sessionTitle])
 
   const handlePush = async () => {
-    if (!repoName.trim()) return
+    if (!target && !repoName.trim()) return
     setBusy(true); setError(null)
     try {
       const result = await pushToGitHub({
@@ -150,13 +154,14 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
               <div className="gh-field">
                 <span className="gh-field-label">Where to push</span>
                 <div className="gh-seg">
-                  <button type="button" className={target ? 'active' : ''} onClick={() => { if (!target && pushRepos?.length) { const r = pushRepos[0]; setTarget({ owner: r.fullName.split('/')[0], repo: r.name }) } }}>Existing repo</button>
-                  <button type="button" className={!target ? 'active' : ''} onClick={() => setTarget(null)}>New repo</button>
+                  <button type="button" className={tab === 'existing' ? 'active' : ''} onClick={() => setTab('existing')}>Existing repo</button>
+                  <button type="button" className={tab === 'new' ? 'active' : ''} onClick={() => { setTab('new'); setTarget(null) }}>New repo</button>
                 </div>
               </div>
 
-              {target ? (
+              {tab === 'existing' ? (
                 <>
+                  {links.length > 1 && !target && <div className="gh-empty" style={{ textAlign: 'left' }}>You have more than one repo connected. Pick the one to use.</div>}
                   {links.length > 0 && (
                     <div className="gh-chips">
                       {links.map((l) => (
@@ -249,7 +254,7 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
             <button
               className="btn-accept"
               onClick={mode === 'push' ? handlePush : handlePull}
-              disabled={busy || (mode === 'push' ? (target ? false : !repoName.trim()) : !pullTarget)}
+              disabled={busy || (mode === 'push' ? (tab === 'existing' ? !target : !repoName.trim()) : !pullTarget)}
             >
               {busy ? 'Working…' : mode === 'push' ? 'Push' : 'Import'}
             </button>

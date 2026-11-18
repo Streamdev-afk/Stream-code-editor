@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { setCtx } from '../lib/appContext'
 import { createShell, runCommand, autocomplete } from '../lib/shell'
-import { isDesktopApp, linkedFolder, chooseFolder, saveAllToDisk } from '../lib/diskSave'
+import { isDesktopApp, linkedFolder, chooseFolder, saveAllToDisk, projectFolderPath, layoutFor, noteLayout } from '../lib/diskSave'
 import { getLanguageFromPath } from '../lib/fs'
 
 const stripAnsi = (t) => String(t).replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\r(?!\n)/g, '\n')
@@ -9,7 +9,10 @@ const stripAnsi = (t) => String(t).replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').
 export default function Terminal({ files, onFilesChange, projectId }) {
   const desktop = isDesktopApp() && !!window.desktop?.termRun
   const [real, setReal] = useState(false) // real = commands run on this computer
-  const [rcwd, setRcwd] = useState('') // folder inside the project, '' = project root
+  const [rcwd, setRcwd] = useState('') // the real folder the terminal is in ('' = the project folder)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [folderPath, setFolderPath] = useState('')
+  useEffect(() => { if (desktop) projectFolderPath(projectId).then((p) => setFolderPath(p || '')) }, [projectId, real, files])
   const [busy, setBusy] = useState(null) // id of the running command
   const runId = useRef(0)
   const filesRef = useRef(files)
@@ -41,7 +44,7 @@ export default function Terminal({ files, onFilesChange, projectId }) {
       <span className="term-prompt">
         <span className="term-user">qoders</span>
         <span className="term-sep">:</span>
-        <span className="term-path">{real ? '/' + rcwd : shell.cwd}</span>
+        <span className="term-path">{real ? (rcwd || folderPath || 'no folder yet') : shell.cwd}</span>
         <span className="term-sigil">$</span>
       </span>
     )
@@ -55,13 +58,18 @@ export default function Terminal({ files, onFilesChange, projectId }) {
       folder = await chooseFolder(projectId)
       if (!folder) { setLines((l) => [...l, { type: 'info', text: 'No folder chosen, so nothing ran.' }]); return }
     }
-    const cd = cmd.match(/^cd(?:\s+(.*))?$/)
+    noteLayout(projectId, filesRef.current, window.__qodersTitle)
+    const projectDir = (await projectFolderPath(projectId)) || folder.path // the project's own folder inside the chosen one
+    const here = rcwd || projectDir
+    // cd works like a normal terminal: any folder on the computer, and a wrong path is an error
+    const cd = cmd.match(/^cd(?:\s+(?:\/d\s+)?(.*))?$/i) || (/^[a-z]:$/i.test(cmd) ? [cmd, cmd] : null)
     if (cd) {
-      const parts = (rcwd ? rcwd.split('/') : [])
-      const target = (cd[1] || '').trim().replace(/^["']|["']$/g, '')
-      if (!target || target === '~' || target === '/') parts.length = 0
-      else for (const seg of target.split(/[\\/]/)) { if (seg === '..') parts.pop(); else if (seg && seg !== '.') parts.push(seg) }
-      setRcwd(parts.join('/'))
+      const r = await window.desktop.termCd(here, cd[1] || '')
+      if (r.ok) { setRcwd(r.cwd); if (opts.ai) window.dispatchEvent(new CustomEvent('qoders-run-done', { detail: { cmd, code: 0, test: !!opts.test, output: '' } })) }
+      else {
+        setLines((ls) => [...ls, { type: 'output', text: r.error }])
+        if (opts.ai) window.dispatchEvent(new CustomEvent('qoders-run-done', { detail: { cmd, code: 1, test: !!opts.test, output: r.error } }))
+      }
       return
     }
     const dl = cmd.match(/^(?:download|dl)\s+(\S+)(?:\s+(.+))?$/i)
@@ -88,24 +96,32 @@ export default function Terminal({ files, onFilesChange, projectId }) {
       setLines((ls) => ls.map((ln) => (ln.rid === id ? { ...ln, text: (ln.text + stripAnsi(chunk)).slice(-60000) } : ln)))
     })
     try {
-      await saveAllToDisk(projectId, filesRef.current) // the folder gets the newest editor files first
+      await saveAllToDisk(projectId, filesRef.current) // the project folder gets the newest editor files first
       if (opts.ai) watch = setTimeout(() => sendDone(null, true), 20000) // a server that keeps running: look at what it printed so far
       const r = dl
-        ? await window.desktop.termDownload(id, folder.path, rcwd, dl[1], dl[2] && dl[2].trim())
-        : await window.desktop.termRun(id, folder.path, rcwd, cmd)
+        ? await window.desktop.termDownload(id, projectDir, here, dl[1], dl[2] && dl[2].trim())
+        : await window.desktop.termRun(id, projectDir, here, cmd)
       if (r.error) setLines((ls) => [...ls, { type: 'output', text: r.error }])
       else if (r.code !== 0) setLines((ls) => [...ls, { type: 'info', text: `exited with code ${r.code}` }])
       if (r.error) collected += r.error
       clearTimeout(watch)
       sendDone(r.error ? 1 : r.code, false)
-      // files the command made or changed come back into the editor
-      const changed = await window.desktop.termScan(folder.path, started)
-      const paths = Object.keys(changed).filter((p) => filesRef.current[p]?.content !== changed[p])
-      if (paths.length && onFilesChange) {
-        const next = { ...filesRef.current }
-        for (const p of paths) next[p] = { content: changed[p], language: getLanguageFromPath(p) }
-        onFilesChange(next)
-        setLines((ls) => [...ls, { type: 'info', text: `${paths.length} file${paths.length === 1 ? '' : 's'} updated in the editor` }])
+      // files the command made or changed come back into the editor (not for installs, downloads and unpacking: those are not your project)
+      const inProject = !rcwd || rcwd.startsWith(projectDir)
+      const quiet = /^(tar|unzip|7z|expand-archive|download|dl|adb|curl|wget|pip3?|git\s+(clone|pull|fetch)|npm\s+(i|install|ci|update)|yarn(\s+install)?|pnpm\s+(i|install))\b/i.test(cmd)
+      if (inProject && !quiet) {
+        const scan = await window.desktop.termScan(projectDir, started)
+        const prefix = layoutFor(projectId).importPrefix
+        const changed = Object.fromEntries(Object.entries(scan.files || {}).map(([k, v]) => [prefix + k, v]))
+        const paths = Object.keys(changed).filter((p) => filesRef.current[p]?.content !== changed[p])
+        if (scan.tooMany) {
+          setLines((ls) => [...ls, { type: 'info', text: 'Many files changed in the folder, so I did not add them to the editor. They are still on your computer.' }])
+        } else if (paths.length && onFilesChange) {
+          const next = { ...filesRef.current }
+          for (const p of paths) next[p] = { content: changed[p], language: getLanguageFromPath(p) }
+          onFilesChange(next)
+          setLines((ls) => [...ls, { type: 'info', text: `${paths.length} file${paths.length === 1 ? '' : 's'} updated in the editor` }])
+        }
       }
     } catch (e) {
       setLines((ls) => [...ls, { type: 'output', text: String(e.message || e) }])
@@ -121,7 +137,7 @@ export default function Terminal({ files, onFilesChange, projectId }) {
     const go = (d) => {
       if (!d?.cmd || !desktop) return
       setReal(true)
-      setLines((l) => [...l, { type: 'input', cwd: '/' + rcwd, text: d.cmd }])
+      setLines((l) => [...l, { type: 'input', cwd: rcwd || folderPath, text: d.cmd }])
       runRealRef.current(d.cmd, { ai: true, test: d.test })
     }
     const pending = window.__qodersPendingRun
@@ -138,7 +154,7 @@ export default function Terminal({ files, onFilesChange, projectId }) {
     if (real && cmd && !busy) {
       if (cmd === 'clear') { setLines([]); setInput(''); return }
       setHistory((h) => [...h, cmd]); setHistIndex(-1)
-      setLines((l) => [...l, { type: 'input', cwd: '/' + rcwd, text: cmd }])
+      setLines((l) => [...l, { type: 'input', cwd: rcwd || folderPath, text: cmd }])
       setInput('')
       runReal(cmd)
       return
@@ -214,14 +230,6 @@ export default function Terminal({ files, onFilesChange, projectId }) {
       className="terminal"
       onClick={() => inputRef.current?.focus()}
     >
-      {desktop && (
-        <div className="term-bar">
-          <button className={`term-mode ${!real ? 'on' : ''}`} onClick={() => setReal(false)} title="Safe: only works on the project files inside the editor">Virtual</button>
-          <button className={`term-mode ${real ? 'on' : ''}`} onClick={() => setReal(true)} title="Runs for real on your computer: npm, npx, python, git…">This computer</button>
-          {busy && <button className="term-stop" onClick={stopReal}>Stop (Ctrl+C)</button>}
-          <span className="term-hint">{real ? 'Commands run on your computer, in your project folder.' : 'Virtual shell. Switch to "This computer" for npm, python and more.'}</span>
-        </div>
-      )}
       <div className="terminal-output">
         {lines.map((line, i) => {
           if (line.type === 'input') {
@@ -249,6 +257,18 @@ export default function Terminal({ files, onFilesChange, projectId }) {
           )
         })}
         <div className="term-line term-line-active">
+          {desktop && (
+            <span className="term-menu-wrap">
+              <button className={`term-dots ${real ? 'real' : ''}`} onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }} title="Terminal options" aria-label="Terminal options">⋯</button>
+              {menuOpen && (
+                <div className="term-menu" onClick={(e) => e.stopPropagation()}>
+                  <button className={!real ? 'on' : ''} onClick={() => { setReal(false); setMenuOpen(false) }}>Virtual (project files only)</button>
+                  <button className={real ? 'on' : ''} onClick={() => { setReal(true); setMenuOpen(false) }}>This computer (real commands)</button>
+                  {busy && <button className="danger" onClick={() => { stopReal(); setMenuOpen(false) }}>Stop running command</button>}
+                </div>
+              )}
+            </span>
+          )}
           {prompt()}
           <input
             ref={inputRef}

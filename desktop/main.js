@@ -3,6 +3,7 @@
 const { app, BrowserWindow, shell, Menu, dialog, ipcMain } = require('electron')
 const http = require('http')
 const { spawn } = require('child_process')
+const os = require('os')
 const https = require('https')
 const fs = require('fs')
 const path = require('path')
@@ -110,10 +111,11 @@ const insideRoot = (root, rel) => {
   const target = path.resolve(base, rel || '.')
   return target === base || target.startsWith(base + path.sep) ? target : null
 }
-ipcMain.handle('term-run', (e, { id, root, rel, cmd }) => new Promise((resolve) => {
-  if (typeof root !== 'string' || typeof cmd !== 'string' || !cmd.trim()) return resolve({ code: 1, error: 'bad request' })
-  const cwd = insideRoot(root, rel)
-  if (!cwd || !fs.existsSync(cwd)) return resolve({ code: 1, error: 'That folder does not exist.' })
+ipcMain.handle('term-run', (e, { id, root, cwd: cwdArg, cmd }) => new Promise((resolve) => {
+  if (typeof cmd !== 'string' || !cmd.trim()) return resolve({ code: 1, error: 'bad request' })
+  const cwd = typeof cwdArg === 'string' && cwdArg ? cwdArg : root
+  if (typeof cwd === 'string' && !fs.existsSync(cwd) && typeof root === 'string' && path.resolve(cwd).startsWith(path.resolve(root))) { try { fs.mkdirSync(cwd, { recursive: true }) } catch {} }
+  if (typeof cwd !== 'string' || !fs.existsSync(cwd)) return resolve({ code: 1, error: `The folder ${cwd} does not exist.` })
   const send = (chunk) => { try { e.sender.send('term-data', { id, chunk: chunk.toString('utf8') }) } catch {} }
   const child = spawn(cmd, { cwd, shell: true, env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true })
   runs.set(id, child)
@@ -122,6 +124,18 @@ ipcMain.handle('term-run', (e, { id, root, rel, cmd }) => new Promise((resolve) 
   child.on('error', (err) => { runs.delete(id); resolve({ code: 1, error: String(err.message || err) }) })
   child.on('close', (code) => { runs.delete(id); resolve({ code: code == null ? 1 : code }) })
 }))
+// cd for real: checks the folder exists, like a normal terminal
+ipcMain.handle('term-cd', (_e, { cwd, target }) => {
+  let t = String(target || '').trim().replace(/^["']|["']$/g, '')
+  if (!t || t === '~') t = os.homedir()
+  else if (t.startsWith('~/') || t.startsWith('~\\')) t = path.join(os.homedir(), t.slice(2))
+  if (/^[a-z]:$/i.test(t)) t += path.sep // "D:" jumps to that drive
+  const next = path.resolve(cwd || os.homedir(), t)
+  let st
+  try { st = fs.statSync(next) } catch { return { ok: false, error: process.platform === 'win32' ? 'The system cannot find the path specified.' : `cd: no such file or directory: ${target}` } }
+  if (!st.isDirectory()) return { ok: false, error: process.platform === 'win32' ? 'The directory name is invalid.' : `cd: not a directory: ${target}` }
+  return { ok: true, cwd: next }
+})
 ipcMain.handle('term-kill', (_e, id) => {
   const c = runs.get(id)
   if (!c) return false
@@ -130,9 +144,9 @@ ipcMain.handle('term-kill', (_e, id) => {
   return true
 })
 // download a file from the web straight into the project folder
-ipcMain.handle('term-download', (e, { id, root, rel, url, name }) => new Promise((resolve) => {
+ipcMain.handle('term-download', (e, { id, root, cwd: cwdArg, url, name }) => new Promise((resolve) => {
   const say = (t) => { try { e.sender.send('term-data', { id, chunk: t }) } catch {} }
-  const cwd = insideRoot(root, rel)
+  const cwd = typeof cwdArg === 'string' && cwdArg ? cwdArg : root
   if (!cwd || !fs.existsSync(cwd)) return resolve({ code: 1, error: 'That folder does not exist.' })
   let u
   try { u = new URL(url) } catch { return resolve({ code: 1, error: 'That is not a valid link.' }) }
@@ -146,8 +160,7 @@ ipcMain.handle('term-download', (e, { id, root, rel, url, name }) => new Promise
       }
       if (res.statusCode !== 200) { res.resume(); return resolve({ code: 1, error: `The server answered ${res.statusCode}.` }) }
       const fileName = (name || decodeURIComponent(path.basename(link.pathname)) || 'download').replace(/[\\/:*?"<>|]/g, '_')
-      const target = insideRoot(root, path.join(rel || '.', fileName))
-      if (!target) return resolve({ code: 1, error: 'Bad file name.' })
+      const target = path.join(cwd, fileName)
       const total = Number(res.headers['content-length']) || 0
       let got = 0, last = 0
       const out = fs.createWriteStream(target)
@@ -157,7 +170,7 @@ ipcMain.handle('term-download', (e, { id, root, rel, url, name }) => new Promise
         if (Date.now() - last > 700) { last = Date.now(); say(`\rDownloading ${fileName}: ${(got / 1048576).toFixed(1)} MB${total ? ` of ${(total / 1048576).toFixed(1)} MB` : ''}   `) }
       })
       res.pipe(out)
-      out.on('finish', () => { say(`\nSaved ${fileName} (${(got / 1048576).toFixed(2)} MB) in ${path.relative(path.resolve(root), path.dirname(target)) || 'the project folder'}\n`); resolve({ code: 0 }) })
+      out.on('finish', () => { say(`\nSaved ${fileName} (${(got / 1048576).toFixed(2)} MB) in ${cwd}\n`); resolve({ code: 0 }) })
       out.on('error', (err) => resolve({ code: 1, error: String(err.message || err) }))
     })
     req.on('error', (err) => resolve({ code: 1, error: String(err.message || err) }))
@@ -167,31 +180,37 @@ ipcMain.handle('term-download', (e, { id, root, rel, url, name }) => new Promise
 }))
 
 // text files in the project folder that changed since a moment ago (so files a command made show up in the editor)
-const SKIP_DIRS = new Set(['node_modules', '.git', 'venv', '.venv', '__pycache__', 'dist', 'build', '.next', '.cache', 'target', 'release'])
-const TEXT_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|json|html|htm|css|scss|md|txt|py|rb|go|rs|java|c|h|cpp|cs|php|sh|yml|yaml|toml|xml|svg|env|gitignore|sql|vue|svelte|ini|cfg|lock)$/i
-ipcMain.handle('term-scan', async (_e, { root, since }) => {
+const SKIP_DIRS = new Set(['node_modules', '.git', 'venv', '.venv', '__pycache__', 'dist', 'build', '.next', '.cache', 'target', 'release', 'bin', 'obj', 'out', 'platform-tools', 'vendor', 'Pods', '.gradle', '.idea', '.vscode', '.dart_tool', '__MACOSX', 'tmp', 'temp', 'coverage', 'site-packages', 'lib64'])
+const TEXT_EXT = /\.(js|jsx|ts|tsx|mjs|cjs|json|html|htm|css|scss|md|txt|py|rb|go|rs|java|c|h|cpp|cs|php|sh|yml|yaml|toml|xml|svg|env|gitignore|sql|vue|svelte)$/i
+async function scanFolder(root, since, limit) {
   const out = {}
   let count = 0
+  let over = false
   const walk = async (dir, rel) => {
     let items
     try { items = await fs.promises.readdir(dir, { withFileTypes: true }) } catch { return }
     for (const it of items) {
-      if (count >= 400) return
+      if (over) return
       const r = rel ? `${rel}/${it.name}` : it.name
-      if (it.isDirectory()) { if (!SKIP_DIRS.has(it.name)) await walk(path.join(dir, it.name), r); continue }
+      if (it.isDirectory()) { if (!SKIP_DIRS.has(it.name) && !it.name.startsWith('.')) await walk(path.join(dir, it.name), r); continue }
       if (!it.isFile() || !TEXT_EXT.test(it.name)) continue
       try {
         const full = path.join(dir, it.name)
         const st = await fs.promises.stat(full)
         if (st.mtimeMs < since || st.size > 300 * 1024) continue
+        if (count >= limit) { over = true; return }
         out[r] = await fs.promises.readFile(full, 'utf8')
         count++
       } catch {}
     }
   }
   if (typeof root === 'string' && fs.existsSync(root)) await walk(path.resolve(root), '')
-  return out
-})
+  return { files: out, tooMany: over }
+}
+// files a command made or changed (small numbers only: a big pile is not the user's project)
+ipcMain.handle('term-scan', (_e, { root, since }) => scanFolder(root, since, 25))
+// open an existing folder's project files in the editor
+ipcMain.handle('disk-read', (_e, root) => scanFolder(root, 0, 300))
 
 // ---------- updates (from the project's GitHub releases) ----------
 let updater = null

@@ -67,7 +67,7 @@ export async function createRepo(token, name, { isPrivate = true, description = 
       name,
       description,
       private: isPrivate,
-      auto_init: false,
+      auto_init: true, // an empty repo cannot take a commit through the git API, so GitHub makes the first commit
     }),
   })
 }
@@ -177,8 +177,18 @@ async function setRef(token, owner, repo, branch, sha) {
 export async function pushFiles(token, owner, repo, branch, files, message = 'Update via ION Qoders') {
   // files: [{ path, content }, ...]
 
-  // Get the current HEAD
-  const headSha = await getHeadCommit(token, owner, repo, branch)
+  // Get the current HEAD (a repo that is completely empty gets its first commit through the contents API)
+  let headSha = await getHeadCommit(token, owner, repo, branch).catch(() => null)
+  if (!headSha) {
+    try {
+      await ghFetch(`/repos/${owner}/${repo}/contents/README.md`, token, {
+        method: 'PUT',
+        body: JSON.stringify({ message: 'Initial commit', content: Buffer.from(`# ${repo}\n`, 'utf8').toString('base64'), branch }),
+      })
+    } catch { /* it may already exist; the push below will tell */ }
+    await new Promise((r) => setTimeout(r, 800))
+    headSha = await getHeadCommit(token, owner, repo, branch).catch(() => null)
+  }
 
   // Build blobs
   const blobs = []

@@ -593,7 +593,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty response.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    if (!followUp) recordUsage(req, thinkingCost)
+    if (!followUp && totalChars > 0) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Chat error:', err)
@@ -699,7 +699,7 @@ You respond with ONLY a JSON object:
 "ask" is OPTIONAL: see QUESTIONS below. Leave it out unless you truly need an answer.
 
 "actions" is OPTIONAL. Leave it out unless the user explicitly asked for one of these. The user must approve every action, you can never run them yourself:
-- github_push: the user wants the project saved/pushed to GitHub (opens the push dialog). "message" = a git commit message for what changed (imperative, max 72 characters, plain text)
+- github_push: (when the user wants a NEW repo, add "newRepo": true and a short "repo" name suggestion; the user can change it in a window)  the user wants the project saved/pushed to GitHub (opens the push dialog). "message" = a git commit message for what changed (imperative, max 72 characters, plain text)
 - github_import: the user wants to import a GitHub repo (opens the import dialog); optional "repo": "owner/name" (only if the user named it)
 - run_preview: the user wants to see the project running (opens the live preview)
 - run_tests: the user wants the project checked for errors
@@ -794,6 +794,12 @@ function rulesBlock(req, lite) {
   const mem = clip(b.memoryContext, 4500)
   if (mem) out += `\n\n${mem}`
   if (!lite) {
+    out += `\n\n## PROJECT FOLDERS (always follow)
+- A NEW project goes inside ONE main folder named after the project (lowercase-with-dashes), with its subfolders inside it, for example my-site/package.json, my-site/index.html, my-site/src/main.tsx, my-site/public/logo.svg. Never spread a new project's files over the top level.
+- If the existing files already live in one main folder, keep working inside that folder. Do not make a second one.
+- If the user wants a new project and did not give it a name, and questions are allowed, ask for the project name first (suggest 2 short names; they can type their own). Use the name they pick for the folder.
+- Terminal commands run in the project's folder on the user's computer. If package.json sits in a subfolder of that folder, write commands like "cd my-site && npm install".
+- A project with a package.json (Vite, React, Next, TypeScript, 3D) cannot show in the plain inline preview. After writing its files, propose run_command actions: "npm install" then "npm run dev", and tell the user the Local tab will show the running site.`
     const ctx = clip(b.appContext, 7000)
     if (ctx) out += `\n\n## ABOUT THE EDITOR AND THE USER\n${ctx}`
   }
@@ -890,7 +896,7 @@ Preview supports HTML/CSS/JS + React (via https://esm.sh/react@18 CDN imports).
 - Interactive apps → React with CDN imports
 - Games/3D → canvas/WebGL or Three.js from CDN
 
-No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}${JSON_ONLY}`
+No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(req.body.persona)}${rulesBlock(req)}${askBlock(req, 'json')}${JSON_ONLY}${req.body.strict ? '\n\nThe last answer had no usable steps. This time the "steps" array MUST contain at least one step with an id, title, description and files.' : ''}`
 
   const conversation = Array.isArray(history)
     ? history.slice(-10).map((m) => ({ role: m.role, content: m.text || m.content || '' }))
@@ -922,13 +928,16 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
           }),
     })
     let totalChars = 0
+    let acc = ''
     for await (const chunk of stream) {
       const text = chunk.choices[0]?.delta?.content || ''
-      if (text) { totalChars += text.length; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
+      if (text) { totalChars += text.length; acc += text; res.write(`data: ${JSON.stringify({ text })}\n\n`) }
     }
     if (totalChars === 0) res.write(`data: ${JSON.stringify({ error: 'AI returned empty plan.' })}\n\n`)
     res.write('data: [DONE]\n\n')
-    if (!followUp) recordUsage(req, thinkingCost)
+    // credits are only used for a plan that has steps (or a question / a read request), never for an empty answer
+    const usable = /"steps"\s*:\s*\[\s*\{/.test(acc) || /"ask"\s*:/.test(acc) || /"shell"\s*:\s*\[/.test(acc)
+    if (!followUp && usable) recordUsage(req, thinkingCost)
     res.end()
   } catch (err) {
     console.error('Plan error:', err)

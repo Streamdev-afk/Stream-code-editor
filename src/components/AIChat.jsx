@@ -331,7 +331,8 @@ useEffect(() => {
     try {
       // If planning mode is on, plan first
       if (planningMode && onPlanReady) {
-        const planResult = await planTask(
+        let planResult = null
+        try { planResult = await planTask(
   { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, team: !!team, teamSize: getTeamMembers().length, onStatus: showReading },
           (_chunk, full) => {
             let hint = 'Analyzing project…'
@@ -343,8 +344,16 @@ useEffect(() => {
               return c
             })
           }
-        )
+        ) } catch (pe) { if (!pe.planFailed) throw pe }
 
+        if (!planResult) {
+          // the planner gave nothing usable: say so and work on it directly instead of opening an empty plan
+          setMessages((m) => {
+            const c = [...m]
+            c[c.length - 1] = { role: 'assistant', text: 'The planner could not make a plan for this, so I am working on it directly instead.', time: Date.now(), _status: true }
+            return c
+          })
+        } else {
         const stepCount = Array.isArray(planResult.steps) ? planResult.steps.length : 0
         const planAsk = askQuestionsOn() ? normalizeAsk(planResult.ask) : null
         if (planAsk && !stepCount) {
@@ -371,6 +380,7 @@ useEffect(() => {
         onPlanReady(planResult, text)
         setStreaming(false)
         return
+        }
       }
 
       // Fallback: direct agent (no planning)

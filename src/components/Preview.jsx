@@ -60,6 +60,27 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
   }, [picking, key])
   const onFrameLoad = () => iframeRef.current?.contentWindow?.postMessage({ __pickMode: picking }, '*')
 
+  // a project that needs npm (Vite, React, TypeScript, 3D...) cannot run in the plain inline preview
+  const npmProject = (() => {
+    const pkgPath = Object.keys(files || {}).find((p) => /(^|\/)package\.json$/.test(p))
+    if (!pkgPath) return null
+    try {
+      const pkg = JSON.parse(files[pkgPath].content)
+      const script = pkg.scripts?.dev ? 'dev' : pkg.scripts?.start ? 'start' : null
+      if (!script) return null
+      const dir = pkgPath.includes('/') ? pkgPath.slice(0, pkgPath.lastIndexOf('/')) : ''
+      return { script, dir }
+    } catch { return null }
+  })()
+  const desktopApp = typeof window !== 'undefined' && !!window.desktop?.termRun
+  const runNpm = () => {
+    const pre = npmProject.dir ? `cd ${npmProject.dir} && ` : ''
+    window.dispatchEvent(new CustomEvent('qoders-enqueue', { detail: { goal: 'Run the project', commands: [
+      { command: `${pre}npm install`, test: true, message: 'Installs the packages this project needs' },
+      { command: `${pre}npm run ${npmProject.script}`, test: true, message: 'Starts the project on your computer' },
+    ] } }))
+  }
+
   const sendChange = () => {
     if (!picked || !ask.trim()) return
     const st = picked.styles || {}
@@ -155,6 +176,14 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
         </div>
       </div>
 
+      {npmProject && mode !== 'local' && !localUrl && (
+        <div className="npm-banner">
+          <div><strong>This project needs npm.</strong> It cannot show here until its packages are installed and it is started, so you may only see a blank page.</div>
+          {desktopApp
+            ? <button className="action-btn" onClick={runNpm}>Install &amp; run it</button>
+            : <div className="npm-hint">Open the desktop app to run it, or run <code>npm install</code> then <code>npm run {npmProject.script}</code> yourself.</div>}
+        </div>
+      )}
       {mode === 'local' && localUrl ? (
         <div className="preview-url-frame-wrap">
           <iframe key={key} className="preview-frame" title="Local server" src={localUrl} />

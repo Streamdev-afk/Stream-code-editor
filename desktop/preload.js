@@ -13,8 +13,10 @@ contextBridge.exposeInMainWorld('desktop', {
     return () => ipcRenderer.removeListener('local-console', f)
   },
   // real terminal (runs on this computer, inside the project folder)
-  termRun: (id, root, rel, cmd) => ipcRenderer.invoke('term-run', { id, root, rel, cmd }),
-  termDownload: (id, root, rel, url, name) => ipcRenderer.invoke('term-download', { id, root, rel, url, name }),
+  termRun: (id, root, cwd, cmd) => ipcRenderer.invoke('term-run', { id, root, cwd, cmd }),
+  termCd: (cwd, target) => ipcRenderer.invoke('term-cd', { cwd, target }),
+  diskRead: (root) => ipcRenderer.invoke('disk-read', root),
+  termDownload: (id, root, cwd, url, name) => ipcRenderer.invoke('term-download', { id, root, cwd, url, name }),
   termKill: (id) => ipcRenderer.invoke('term-kill', id),
   termScan: (root, since) => ipcRenderer.invoke('term-scan', { root, since }),
   onTermData: (cb) => {

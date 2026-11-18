@@ -68,7 +68,7 @@ import { startCheckout, redirectToCheckout } from './lib/paystack'
 import GitHubModal from './components/GitHubModal'
 import ActionsModal from './components/ActionsModal'
 import DesktopUpdater from './components/DesktopUpdater'
-import { saveToDisk, saveAllToDisk, chooseFolder, linkedFolder, canPickFolder } from './lib/diskSave'
+import { saveToDisk, saveAllToDisk, chooseFolder, linkedFolder, canPickFolder, noteLayout, setDirectFolder } from './lib/diskSave'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
@@ -393,7 +393,7 @@ const [showLogin, setShowLogin] = useState(false)
       .filter((a) => a && ALLOWED_AI_ACTIONS.includes(a.type))
       .slice(0, 3)
       .filter((a) => a.type !== 'run_command' || (typeof a.command === 'string' && a.command.trim() && !/[\r\n]/.test(a.command.trim())))
-      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), command: String(a.command || '').trim().slice(0, 200) }))
+      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), newRepo: !!a.newRepo, command: String(a.command || '').trim().slice(0, 200) }))
     if (clean.length) setAiActions(clean)
   }
   const runAiAction = (a) => {
@@ -405,7 +405,7 @@ const [showLogin, setShowLogin] = useState(false)
       return
     }
     if (did) addActivity([{ kind: did[0], title: did[1], detail: a.message || a.repo || '' }])
-    if (a.type === 'github_push') { setGhHint({ message: a.message }); handleGitHubPush() }
+    if (a.type === 'github_push') { setGhHint({ message: a.message, repo: a.repo, newRepo: !!a.newRepo }); handleGitHubPush() }
     else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
     else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
     else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
@@ -417,6 +417,11 @@ const [showLogin, setShowLogin] = useState(false)
   const cmdAnyTest = useRef(false)
   const cmdGoal = useRef('')
 
+  useEffect(() => {
+    const h = (e) => { const list = (e.detail?.commands || []).filter((c) => c && c.command); if (list.length) { cmdGoal.current = e.detail.goal || ''; enqueueCommands(list) } }
+    window.addEventListener('qoders-enqueue', h)
+    return () => window.removeEventListener('qoders-enqueue', h)
+  })
   const startNextCommand = () => {
     const next = cmdQueue.current.shift()
     if (!next) { finishCommands(); return }
@@ -841,6 +846,8 @@ const saveActive = () => {
   const filesRef = useRef(files)
   filesRef.current = files
   const [diskFolder, setDiskFolder] = useState(null)
+  noteLayout(activeSession.id, files, activeSession.title) // decides which folder inside the chosen one holds this project
+  window.__qodersTitle = activeSession.title
   useEffect(() => { linkedFolder(activeSession.id).then(setDiskFolder) }, [activeSession.id])
 
   const diskSaveActive = async () => {
@@ -859,7 +866,27 @@ const saveActive = () => {
   }
   const diskChoose = async () => {
     const c = await chooseFolder(activeSession.id)
-    if (c) { setDiskFolder(c); showToast(`Project folder: ${c.name}`, 'ok') }
+    if (c) {
+      setDiskFolder(c)
+      showToast(`Project folder: ${c.name}`, 'ok')
+      // the chosen folder already holds a project: use it directly, or keep it as a workspace
+      setDirectFolder(activeSession.id, false)
+      if (c.path && window.desktop?.diskRead) {
+        try {
+          const found = await window.desktop.diskRead(c.path)
+          const names = Object.keys(found.files || {})
+          const atRoot = names.some((n) => !n.includes('/'))
+          if (atRoot && window.confirm(`This folder already has a project in it (${names.length}${found.tooMany ? '+' : ''} files).\n\nOK = open it here and save straight into it.\nCancel = keep it as a workspace; this project gets its own folder inside.`)) {
+            setDirectFolder(activeSession.id, true)
+            setFiles((f) => {
+              const next = { ...f }
+              for (const n of names) next[n] = { content: found.files[n], language: getLanguageFromPath(n) }
+              return next
+            })
+          }
+        } catch { /* the folder is still linked */ }
+      }
+    }
   }
   const diskRef = useRef({})
   diskRef.current = { diskSaveActive, diskSaveAll, saveActive }

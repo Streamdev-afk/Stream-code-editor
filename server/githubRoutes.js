@@ -159,6 +159,11 @@ export default function createGithubRouter({ supabaseAdmin }) {
         .filter(([p]) => !p.endsWith('.gitkeep'))
         .map(([path, f]) => ({ path, content: f.content || '' }))
 
+      // the files every repo needs: a .gitignore and a README, added only if the project has none
+      const have = new Set(fileList.map((f) => f.path.toLowerCase()))
+      if (!have.has('.gitignore')) fileList.push({ path: '.gitignore', content: 'node_modules/\ndist/\nbuild/\n.env\n.env.*\n.DS_Store\n*.log\n.vscode/\n.idea/\n__pycache__/\n.venv/\n' })
+      if (!have.has('readme.md')) fileList.push({ path: 'README.md', content: `# ${sessionTitle || safeRepo}\n\nBuilt with ION Qoders.\n` })
+
       if (fileList.length === 0) {
         return res.status(400).json({ error: 'No files to push' })
       }

@@ -240,8 +240,22 @@ export function streamAgent(args, onChunk, onStatus) {
   return runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
 }
 
-export function planTask(args, onChunk, onStatus) {
-  return runExplorable('/api/agent/plan', args, onChunk, onStatus, 'Plan')
+// A plan with no steps is not a plan: ask again (up to 2 more times). If it still fails, the caller works directly instead.
+export async function planTask(args, onChunk, onStatus) {
+  let last
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = await runExplorable('/api/agent/plan', attempt === 0 ? args : { ...args, strict: true }, onChunk, onStatus, 'Plan')
+      const steps = Array.isArray(r.steps) ? r.steps.filter((x) => x && (x.title || x.description)) : []
+      if (!steps.length && !r.ask) throw Object.assign(new Error('The plan came back empty.'), { parseFail: true })
+      r.steps = steps.map((x, i) => ({ ...x, id: x.id ?? `s${i + 1}`, title: String(x.title || x.description || `Step ${i + 1}`), description: String(x.description || ''), files: Array.isArray(x.files) ? x.files.filter((f) => typeof f === 'string') : [] }))
+      return r
+    } catch (e) {
+      last = e
+      if (!e.parseFail) throw e
+    }
+  }
+  throw Object.assign(last || new Error('No plan'), { planFailed: true })
 }
 
 // A step whose answer could not be read is tried again (up to 2 more times) with a stricter, shorter instruction
