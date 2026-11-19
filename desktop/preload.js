@@ -3,6 +3,15 @@ const { contextBridge, ipcRenderer } = require('electron')
 // The small, safe set of things the editor page may ask the desktop app to do.
 contextBridge.exposeInMainWorld('desktop', {
   isDesktop: true,
+  platform: process.platform,
+  // the real terminal (a true shell)
+  ptyAvailable: () => ipcRenderer.invoke('pty-available'),
+  ptyOpen: (id, cwd, cols, rows) => ipcRenderer.invoke('pty-open', { id, cwd, cols, rows }),
+  ptyWrite: (id, data) => ipcRenderer.send('pty-write', { id, data }),
+  ptyResize: (id, cols, rows) => ipcRenderer.send('pty-resize', { id, cols, rows }),
+  ptyKill: (id) => ipcRenderer.invoke('pty-kill', id),
+  onPtyData: (cb) => { const f = (_e, d) => cb(d); ipcRenderer.on('pty-data', f); return () => ipcRenderer.removeListener('pty-data', f) },
+  onPtyExit: (cb) => { const f = (_e, d) => cb(d); ipcRenderer.on('pty-exit', f); return () => ipcRenderer.removeListener('pty-exit', f) },
   version: () => ipcRenderer.invoke('app-version'),
   // sign in with GitHub or Google in a small window inside the app
   oauth: (url) => ipcRenderer.invoke('oauth-open', url),

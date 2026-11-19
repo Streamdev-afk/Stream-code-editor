@@ -1168,3 +1168,18 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .npm-banner { display: flex; align-items: center; gap: 12px; justify-content: space-between; margin: 8px 10px 0; padding: 10px 12px; border-radius: 12px; background: var(--accent-dim); font-size: 12.5px; line-height: 1.45; }
 .npm-banner .action-btn { flex-shrink: 0; }
 .npm-hint code { padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.08); }
+
+/* real terminal */
+.real-term { position: relative; height: 100%; background: var(--bg-app); padding: 6px 0 0 10px; box-sizing: border-box; }
+.real-term-host { height: 100%; width: 100%; }
+.real-term .xterm-viewport { background: transparent !important; }
+.real-term-dots { position: absolute; top: 4px; right: 10px; z-index: 5; width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--text-dim); font-size: 17px; line-height: 1; cursor: pointer; opacity: .6; }
+.real-term-dots:hover { opacity: 1; background: var(--bg-elev, rgba(255,255,255,.08)); }
+.real-term-menu { right: 10px; left: auto; top: 30px; bottom: auto; }
+.real-term-note { position: absolute; inset: 0; z-index: 6; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 20px; text-align: center; background: var(--bg-app); color: var(--text-dim); font-size: 13px; }
+.real-term-note p { margin: 0; max-width: 380px; line-height: 1.5; }
+/* no border or blue outline around any terminal */
+.bottom-panel, .bottom-panel *, .terminal, .terminal *, .real-term, .real-term * { outline: none !important; box-shadow: none; }
+.terminal:focus-within, .real-term:focus-within, .bottom-panel:focus-within, .term-input:focus { border-color: transparent !important; outline: none !important; box-shadow: none !important; }
+.term-menu-wrap .term-menu { box-shadow: 0 14px 40px rgba(0,0,0,.5) !important; }
+.real-term-menu { box-shadow: 0 14px 40px rgba(0,0,0,.5) !important; }

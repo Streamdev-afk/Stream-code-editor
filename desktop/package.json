@@ -54,9 +54,13 @@
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
     },
-    "artifactName": "ION-Qoders-${version}.${ext}"
+    "artifactName": "ION-Qoders-${version}.${ext}",
+    "asarUnpack": [
+      "node_modules/@lydell/**"
+    ]
   },
   "dependencies": {
-    "electron-updater": "^6.3.9"
+    "electron-updater": "^6.3.9",
+    "@lydell/node-pty": "^1.0.0"
   }
 }

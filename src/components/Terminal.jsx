@@ -1,14 +1,15 @@
 import { useState, useRef, useEffect } from 'react'
 import { setCtx } from '../lib/appContext'
 import { createShell, runCommand, autocomplete } from '../lib/shell'
+import RealTerminal from './RealTerminal'
 import { isDesktopApp, linkedFolder, chooseFolder, saveAllToDisk, projectFolderPath, layoutFor, noteLayout } from '../lib/diskSave'
 import { getLanguageFromPath } from '../lib/fs'
 
 const stripAnsi = (t) => String(t).replace(/\u001b\[[0-9;?]*[ -\/]*[@-~]/g, '').replace(/\r(?!\n)/g, '\n')
 
-export default function Terminal({ files, onFilesChange, projectId }) {
+function VirtualTerminal({ files, onFilesChange, projectId, forceReal = false }) {
   const desktop = isDesktopApp() && !!window.desktop?.termRun
-  const [real, setReal] = useState(false) // real = commands run on this computer
+  const [real, setReal] = useState(forceReal) // real = commands run on this computer
   const [rcwd, setRcwd] = useState('') // the real folder the terminal is in ('' = the project folder)
   const [menuOpen, setMenuOpen] = useState(false)
   const [folderPath, setFolderPath] = useState('')
@@ -262,7 +263,7 @@ export default function Terminal({ files, onFilesChange, projectId }) {
               <button className={`term-dots ${real ? 'real' : ''}`} onClick={(e) => { e.stopPropagation(); setMenuOpen((v) => !v) }} title="Terminal options" aria-label="Terminal options">⋯</button>
               {menuOpen && (
                 <div className="term-menu" onClick={(e) => e.stopPropagation()}>
-                  <button className={!real ? 'on' : ''} onClick={() => { setReal(false); setMenuOpen(false) }}>Virtual (project files only)</button>
+                  {!forceReal && <button className={!real ? 'on' : ''} onClick={() => { setReal(false); setMenuOpen(false) }}>Virtual (project files only)</button>}
                   <button className={real ? 'on' : ''} onClick={() => { setReal(true); setMenuOpen(false) }}>This computer (real commands)</button>
                   {busy && <button className="danger" onClick={() => { stopReal(); setMenuOpen(false) }}>Stop running command</button>}
                 </div>
@@ -284,4 +285,15 @@ export default function Terminal({ files, onFilesChange, projectId }) {
       </div>
     </div>
   )
+}
+// On the desktop app the terminal is your real shell. The virtual one only exists on the web.
+export default function Terminal(props) {
+  const [mode, setMode] = useState(() => (isDesktopApp() && window.desktop?.ptyAvailable ? 'check' : isDesktopApp() ? 'spawn' : 'virtual'))
+  useEffect(() => {
+    if (mode !== 'check') return
+    window.desktop.ptyAvailable().then((ok) => setMode(ok ? 'pty' : 'spawn')).catch(() => setMode('spawn'))
+  }, [mode])
+  if (mode === 'check') return <div className="terminal" />
+  if (mode === 'pty') return <RealTerminal {...props} />
+  return <VirtualTerminal {...props} forceReal={mode === 'spawn'} />
 }

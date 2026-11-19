@@ -104,7 +104,49 @@ ipcMain.handle('disk-save', async (_e, { root, rel, content }) => {
 })
 ipcMain.handle('disk-show', (_e, root) => { if (typeof root === 'string' && fs.existsSync(root)) shell.openPath(root) })
 
-// ---------- real terminal: runs commands on this computer, inside the project's folder ----------
+// ---------- the real terminal: a true shell (PowerShell on Windows, your login shell on Mac/Linux) ----------
+let ptyLib = null
+try { ptyLib = require('@lydell/node-pty') } catch { ptyLib = null }
+const ptys = new Map()
+const shellFor = () => {
+  if (process.platform === 'win32') return { file: 'powershell.exe', args: ['-NoLogo', '-ExecutionPolicy', 'Bypass'] }
+  const sh = process.env.SHELL || (process.platform === 'darwin' ? '/bin/zsh' : '/bin/bash')
+  return { file: sh, args: ['-l'] } // a login shell, so PATH has node, npm, brew, nvm like in your own terminal
+}
+ipcMain.handle('pty-available', () => !!ptyLib)
+ipcMain.handle('pty-open', (e, { id, cwd, cols, rows }) => {
+  if (!ptyLib) return { ok: false, error: 'The terminal engine is not available.' }
+  const old = ptys.get(id)
+  if (old) { old.sender = e.sender; return { ok: true, reused: true, buffer: old.buf, shell: old.file } }
+  try { if (cwd && !fs.existsSync(cwd)) fs.mkdirSync(cwd, { recursive: true }) } catch {}
+  const { file, args } = shellFor()
+  try {
+    const proc = ptyLib.spawn(file, args, {
+      name: 'xterm-256color', cols: cols || 80, rows: rows || 24,
+      cwd: cwd && fs.existsSync(cwd) ? cwd : os.homedir(),
+      env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
+    })
+    const entry = { proc, buf: '', sender: e.sender, file }
+    ptys.set(id, entry)
+    proc.onData((d) => {
+      entry.buf = (entry.buf + d).slice(-150000)
+      try { entry.sender.send('pty-data', { id, data: d }) } catch {}
+    })
+    proc.onExit(({ exitCode }) => {
+      ptys.delete(id)
+      try { entry.sender.send('pty-exit', { id, code: exitCode }) } catch {}
+    })
+    return { ok: true, reused: false, buffer: '', shell: file }
+  } catch (err) {
+    return { ok: false, error: String(err.message || err) }
+  }
+})
+ipcMain.on('pty-write', (_e, { id, data }) => { const t = ptys.get(id); if (t && typeof data === 'string') t.proc.write(data) })
+ipcMain.on('pty-resize', (_e, { id, cols, rows }) => { const t = ptys.get(id); if (t && cols > 0 && rows > 0) { try { t.proc.resize(cols, rows) } catch {} } })
+ipcMain.handle('pty-kill', (_e, id) => { const t = ptys.get(id); if (t) { try { t.proc.kill() } catch {} ptys.delete(id) } return true })
+app.on('before-quit', () => { for (const t of ptys.values()) { try { t.proc.kill() } catch {} } })
+
+// ---------- fallback terminal (only used if the engine above is missing): runs commands", on this computer, inside the project's folder ----------
 const runs = new Map()
 const insideRoot = (root, rel) => {
   const base = path.resolve(root)
@@ -117,7 +159,10 @@ ipcMain.handle('term-run', (e, { id, root, cwd: cwdArg, cmd }) => new Promise((r
   if (typeof cwd === 'string' && !fs.existsSync(cwd) && typeof root === 'string' && path.resolve(cwd).startsWith(path.resolve(root))) { try { fs.mkdirSync(cwd, { recursive: true }) } catch {} }
   if (typeof cwd !== 'string' || !fs.existsSync(cwd)) return resolve({ code: 1, error: `The folder ${cwd} does not exist.` })
   const send = (chunk) => { try { e.sender.send('term-data', { id, chunk: chunk.toString('utf8') }) } catch {} }
-  const child = spawn(cmd, { cwd, shell: true, env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }, windowsHide: true })
+  const env = { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1', PYTHONUNBUFFERED: '1', PYTHONIOENCODING: 'utf-8' }
+  const child = process.platform === 'win32'
+    ? spawn('powershell.exe', ['-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', cmd], { cwd, env, windowsHide: true })
+    : spawn(process.env.SHELL || '/bin/bash', ['-l', '-c', cmd], { cwd, env })
   runs.set(id, child)
   child.stdout.on('data', send)
   child.stderr.on('data', send)
