@@ -30,6 +30,8 @@ const parseShellRequest = (text) => {
   return m[1].split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 4)
 }
 
+// asking to run something, or to look at a terminal error: no plan, the agent answers directly and proposes the command
+const RUN_INTENT = /(\b(run|execute|start|launch|install)\b.*\b(npm|npx|yarn|pnpm|node|python|pip|git|adb|dev server|server|command|packages|dependencies)\b)|\bnpm (i|install|run|start|test|ci)\b|\b(look|check|see|read)\b.*\bterminal\b|\bterminal\b.*\b(error|output|failed|says|gave)\b|\b(gave|got|throws?|showing)\b.*\berror\b/i
 const FIX_IT = /^\s*(yes|yeah|yep|ok(ay)?|sure|please|fix( it| them| that)?|try again|retry|continue|go ahead|do it|yes please)[\s.!]*$/i
 const GO_AHEAD = /\b(start|begin|go ahead|get going|let'?s go|do it|build it|make it|continue|proceed|implement)\b/i
 
@@ -330,7 +332,7 @@ useEffect(() => {
 
     try {
       // If planning mode is on, plan first
-      if (planningMode && onPlanReady) {
+      if (planningMode && onPlanReady && !RUN_INTENT.test(text)) {
         let planResult = null
         try { planResult = await planTask(
   { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, team: !!team, teamSize: getTeamMembers().length, onStatus: showReading },
@@ -344,7 +346,7 @@ useEffect(() => {
               return c
             })
           }
-        ) } catch (pe) { if (!pe.planFailed) throw pe }
+        ) } catch (pe) { if (!pe.planFailed && !/formatting the plan|validate JSON|empty plan|Planning failed/i.test(pe.message || '')) throw pe }
 
         if (!planResult) {
           // the planner gave nothing usable: say so and work on it directly instead of opening an empty plan

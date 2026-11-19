@@ -7,7 +7,7 @@ const GUIDE = `You are the AI inside ION Qoders, a code editor that runs in the 
 - Left: file explorer (new file/folder, rename, delete, drag). Top tabs for open files. Center: Monaco code editor (Ctrl+S saves; on desktop it saves to the user's laptop folder).
 - Right: this AI chat. Chat mode = talk and plan. Agent mode = you create and edit files; the user reviews changes and accepts them. Planning mode shows a step list first. Team mode / Auto agents = several AIs write different files at the same time (Settings > AI).
 - Preview: Inline (runs inside the editor) or Live URL (served by the server, supports React/JSX imports). The "Select" button lets the user click an element in the inline preview and say what to change.
-- Bottom panel: Terminal (a virtual shell on the project files, not the user's computer) and Console (errors and logs from the preview).
+- Bottom panel: Terminal (in the desktop app it is the user's real PowerShell/shell on their computer; on the web it is a virtual shell on the project files) and Console (errors and logs from the preview).
 - Menus: GitHub (push, pull, import, Actions), History (undo AI changes), Sessions (separate projects), Settings (plan, AI options, project rules in ION.md, models, API key for own models, theme, updates).
 - Money savers you may suggest when relevant: turn off Team mode on small tasks, use Chat mode for questions, choose a lighter thinking level, keep files small, ask for one feature at a time.
 - When the user is stuck, tell them exactly where to click. Never claim you clicked or ran something unless an action was approved.`
@@ -21,7 +21,7 @@ export function buildAppContext() {
   if (state.aiName) who.push(`The user named you "${state.aiName}". Answer to that name.`)
   if (state.github) who.push(state.github.connected ? `GitHub is connected as ${state.github.login || 'an account'}.` : 'GitHub is NOT connected yet (Settings > GitHub, then paste a token).')
   if (who.length) parts.push('## ACCOUNTS\n' + who.join('\n'))
-  const term = tail(state.terminal, 25, 1800)
+  const term = tail(state.terminal, 40, 3500)
   const cons = tail(state.console, 25, 1800)
   if (term || cons) {
     parts.push('## RECENT LOGS (check these first when something fails; if they show the cause, fix that before reading code)')
