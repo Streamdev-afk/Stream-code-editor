@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import lottie from 'lottie-web/build/player/lottie_light'
+import lottie from 'lottie-web'
 import thinking from '../assets/lottie/thinking.json'
 import writing from '../assets/lottie/writing.json'
 import running from '../assets/lottie/running.json'
