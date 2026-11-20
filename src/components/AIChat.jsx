@@ -1,5 +1,6 @@
 import { createPortal } from 'react-dom'
 import Icon from './Icon'
+import AiAnim from './AiAnim'
 import RichText from './RichText'
 import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
@@ -50,6 +51,8 @@ export default function AIChat({
   onApplyPlan,
   onAiActions,
   onPlanReady,
+  fullAccess = false,
+  onFullAccessToggle,
   model,
   thinking,
   behavior,
@@ -132,6 +135,7 @@ export default function AIChat({
     try { r.start() } catch { setListening(false) }
   }
   const [streaming, setStreaming] = useState(false)
+  useEffect(() => { window.dispatchEvent(new CustomEvent('qoders-ai-state', { detail: { streaming } })) }, [streaming])
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
 
@@ -570,6 +574,13 @@ setMessages((m) => {
                           <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
                         </label>
                       )}
+                      <label className="more-row full-access-row">
+                        <span>Full access mode</span>
+                        <input type="checkbox" checked={!!fullAccess} onChange={(e) => onFullAccessToggle?.(e.target.checked)} />
+                        <span className="full-access-tip" role="tooltip">
+                          Warning: this gives the AI full access to your files and terminal. It edits files and runs commands by itself, with no confirmation, and keeps fixing errors until it works. Uses more tokens.
+                        </span>
+                      </label>
                       <label className="more-row">
                         <span>Web search</span>
                         <input type="checkbox" checked={webOn} onChange={() => { setWeb(!webOn); setWebOn(!webOn) }} />
@@ -739,14 +750,10 @@ setMessages((m) => {
                 {(msg.text || showTyping || isUser || msg._status || !msg.activity) && (
                 <div className={`chat-text ${msg._status ? 'chat-status' : ''}`}>
                   {showTyping ? (
-                    <span className="typing">
-                      <span className="typing-dot" />
-                      <span className="typing-dot" />
-                      <span className="typing-dot" />
-                    </span>
+                    <AiAnim name="thinking" size={46} />
                   ) : (
                     isUser || msg._status
-                      ? (msg.text || (streaming && isLast ? '▍' : ''))
+                      ? <>{msg._status && streaming && isLast && <AiAnim name={/run|command|test|install|terminal/i.test(msg.text || '') ? 'running' : 'writing'} size={26} />}{msg.text || (streaming && isLast ? '▍' : '')}</>
                       : <>
                           <RichText text={extractAsk(msg.text).text} />
                           {streaming && isLast && <span className="rt-caret">▍</span>}

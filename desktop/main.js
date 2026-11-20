@@ -58,6 +58,13 @@ async function createWindow() {
     if (lv === 'log') return
     try { win.webContents.send('local-console', { level: lv, text: String(message).slice(0, 600) }) } catch {}
   })
+  // a crashed or frozen page: save what is stored and bring the editor back by itself instead of leaving a black window
+  const flush = () => { try { win.webContents.session.flushStorageData() } catch {} }
+  const saver = setInterval(flush, 10000)
+  win.on('closed', () => clearInterval(saver))
+  win.on('close', flush)
+  win.webContents.on('render-process-gone', () => { flush(); setTimeout(() => { try { win.reload() } catch {} }, 300) })
+  win.webContents.on('unresponsive', () => { setTimeout(() => { try { if (!win.isDestroyed()) win.reload() } catch {} }, 15000) })
   await win.loadURL(`http://localhost:${PORT}/`)
   return win
 }

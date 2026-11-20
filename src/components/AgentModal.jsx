@@ -1,4 +1,5 @@
 import Icon from './Icon'
+import MinPill from './MinPill'
 import { stripMd } from './RichText'
 import { useState, useMemo } from 'react'
 import { resolveOp } from '../lib/ops'
@@ -29,6 +30,7 @@ const OP_LABEL = {
 export default function AgentModal({ plan, files, onAccept, onReject, originalPrompt }) {
   const ops = plan.operations || []
   const [expanded, setExpanded] = useState(0)
+  const [min, setMin] = useState(false)
   const [selected, setSelected] = useState(() => new Set(ops.map((_, i) => i)))
 
   const diffs = useMemo(
@@ -61,6 +63,8 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
 
   const allSelected = selected.size === ops.length && ops.length > 0
 
+  if (min) return <MinPill anim="writing" title={`${ops.length} change${ops.length === 1 ? '' : 's'} ready`} sub="Tap to review and accept" onClick={() => setMin(false)} />
+
   return (
     <div className="modal-backdrop">
       <div className="modal wide" onClick={(e) => e.stopPropagation()}>
@@ -76,6 +80,7 @@ export default function AgentModal({ plan, files, onAccept, onReject, originalPr
 )}
             </div>
           </div>
+          <button className="modal-min" onClick={() => setMin(true)} title="Minimize">–</button>
           <button className="modal-close" onClick={onReject}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
          

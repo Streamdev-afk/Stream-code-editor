@@ -794,6 +794,15 @@ function rulesBlock(req, lite) {
   let out = r ? `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}` : ''
   const mem = clip(b.memoryContext, 4500)
   if (mem) out += `\n\n${mem}`
+  if (b.fullAccess === true) {
+    out += `\n\n## FULL ACCESS MODE (the user is away and trusts you)
+- Nobody will approve anything. Do the whole job yourself and keep going until it works.
+- Never ask questions or offer options. Decide, and say in one short line what you chose.
+- After you create or change project files, ALWAYS add run_command actions: first install ("cd <folder> && npm install" or the right one for the stack), then start it (for example "cd <folder> && npm run dev"). Skip a command only if it already ran successfully and nothing it depends on changed.
+- When the terminal output shows an error, find the cause, fix the files, then add the run_command again so it is re-run.
+- Keep every reply very short (one or two lines). No long explanations, no code in the reply text.
+- You cannot see the page. Say so once at the end and ask the user to tell you if something looks wrong.`
+  }
   if (!lite) {
     out += `\n\n## PROJECT FOLDERS (always follow)
 - A NEW project goes inside ONE main folder named after the project (lowercase-with-dashes), with its subfolders inside it, for example my-site/package.json, my-site/index.html, my-site/src/main.tsx, my-site/public/logo.svg. Never spread a new project's files over the top level.

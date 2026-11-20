@@ -4,6 +4,7 @@ import { BrowserRouter, Routes, Route, useLocation } from 'react-router-dom'
 import { useEffect } from 'react'
 import './index.css'
 import App from './App.jsx'
+import ErrorBoundary from './ErrorBoundary.jsx'
 import Landing from './pages/Landing.jsx'
 import Features from './pages/Features.jsx'
 import Pricing from './pages/Pricing.jsx'
@@ -31,7 +32,7 @@ createRoot(document.getElementById('root')).render(
         <Route path="/" element={<Landing />} />
         <Route path="/features" element={<Features />} />
         <Route path="/pricing" element={<Pricing />} />
-        <Route path="/editor" element={<App />} />
+        <Route path="/editor" element={<ErrorBoundary><App /></ErrorBoundary>} />
         <Route path="*" element={<Landing />} />
       </Routes>
     </BrowserRouter>

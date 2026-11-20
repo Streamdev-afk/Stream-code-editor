@@ -7,6 +7,8 @@ let RULES = ''
 export const setProjectRules = (t) => { RULES = (t || '').slice(0, 6000) }
 export const setAskQuestions = (v) => { ASK_OK = v !== false }
 export const askQuestionsOn = () => ASK_OK
+let FULL = false
+export const setFullAccess = (v) => { FULL = !!v }
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 import { loadActivePersona } from './team'
@@ -128,7 +130,7 @@ async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK, rules: RULES, appContext: buildAppContext(), memoryContext: buildMemoryContext() }),
+    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK && !FULL, fullAccess: FULL, rules: RULES, appContext: buildAppContext(), memoryContext: buildMemoryContext() }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`
@@ -236,8 +238,14 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
   }
 }
 
-export function streamAgent(args, onChunk, onStatus) {
-  return runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
+export async function streamAgent(args, onChunk, onStatus) {
+  try {
+    return await runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
+  } catch (e) {
+    if (!e.parseFail) throw e
+    // an answer that could not be read: ask once more, shorter and stricter, before giving up
+    return runExplorable('/api/agent', { ...args, strict: true, thinking: 'low' }, onChunk, onStatus, 'Agent')
+  }
 }
 
 // A plan with no steps is not a plan: ask again (up to 2 more times). If it still fails, the caller works directly instead.
@@ -246,9 +254,9 @@ export async function planTask(args, onChunk, onStatus) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const r = await runExplorable('/api/agent/plan', attempt === 0 ? args : { ...args, strict: true }, onChunk, onStatus, 'Plan')
-      const steps = Array.isArray(r.steps) ? r.steps.filter((x) => x && (x.title || x.description)) : []
+      const steps = Array.isArray(r.steps) ? r.steps.filter((x) => x && typeof x === 'object' && (x.title || x.description) && !/^shell(\.\d+)*$/i.test(String(x.title || '').trim())) : []
       if (!steps.length && !r.ask) throw Object.assign(new Error('The plan came back empty.'), { parseFail: true })
-      r.steps = steps.map((x, i) => ({ ...x, id: x.id ?? `s${i + 1}`, title: String(x.title || x.description || `Step ${i + 1}`), description: String(x.description || ''), files: Array.isArray(x.files) ? x.files.filter((f) => typeof f === 'string') : [] }))
+      r.steps = steps.map((x, i) => ({ ...x, id: `s${i + 1}`, title: String(x.title || x.description || `Step ${i + 1}`), description: String(x.description || ''), files: Array.isArray(x.files) ? x.files.filter((f) => typeof f === 'string') : [] }))
       return r
     } catch (e) {
       last = e

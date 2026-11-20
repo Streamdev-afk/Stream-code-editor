@@ -1,5 +1,7 @@
 import Icon from './components/Icon'
 import ActionCard from './components/ActionCard'
+import RunPill from './components/RunPill'
+import MinPill from './components/MinPill'
 import { useState, useRef, useEffect, useMemo } from 'react'
 import Editor from './components/Editor'
 import FileTree from './components/FileTree'
@@ -37,7 +39,7 @@ import LinkPanel from './components/LinkPanel'
 import { pendingActions, markAction, countLinks } from './lib/links'
 import { setCtx, saveCheckpoint, loadCheckpoint, clearCheckpoint } from './lib/appContext'
 import { getGitHubStatus } from './lib/github'
-import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions, setProjectRules } from './lib/ai'
+import { updatePreviewSession, fetchPreviewErrors, clearPreviewErrors, diagnose, executeStep, summarizeChanges, setAskQuestions, setProjectRules, setFullAccess } from './lib/ai'
 import PlanningModal from './components/PlanningModal'
 import { useMobile } from './lib/useMobile'
 import { AuthProvider, useAuth } from './lib/auth'
@@ -387,6 +389,25 @@ const [showLogin, setShowLogin] = useState(false)
   const [pendingPlan, setPendingPlan] = useState(null)
   const [ghHint, setGhHint] = useState(null) // AI suggestions for the GitHub window (commit message / repo)
   const [aiActions, setAiActions] = useState([]) // actions the AI proposed, waiting for the user's OK
+  // Full access mode: the AI edits files and runs commands by itself until it works (the user chose this)
+  const [fullAccess, setFullAccessState] = useState(() => { try { return localStorage.getItem('qoders-full-access') === '1' } catch { return false } })
+  const fullRef = useRef(fullAccess)
+  fullRef.current = fullAccess
+  const fixRounds = useRef(0)
+  const [aiStreaming, setAiStreaming] = useState(false)
+  const [editNote, setEditNote] = useState(null)
+  const toggleFullAccess = (on) => {
+    setFullAccessState(on)
+    setFullAccess(on)
+    try { localStorage.setItem('qoders-full-access', on ? '1' : '0') } catch { /* ignore */ }
+    if (!on) fixRounds.current = 0
+  }
+  useEffect(() => { setFullAccess(fullAccess) }, [fullAccess])
+  useEffect(() => {
+    const h = (e) => setAiStreaming(!!e.detail?.streaming)
+    window.addEventListener('qoders-ai-state', h)
+    return () => window.removeEventListener('qoders-ai-state', h)
+  }, [])
   const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests', 'run_command']
   const queueAiActions = (list) => {
     const clean = (Array.isArray(list) ? list : [])
@@ -394,8 +415,17 @@ const [showLogin, setShowLogin] = useState(false)
       .slice(0, 3)
       .filter((a) => a.type !== 'run_command' || (typeof a.command === 'string' && a.command.trim() && !/[\r\n]/.test(a.command.trim())))
       .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), newRepo: !!a.newRepo, command: String(a.command || '').trim().slice(0, 200) }))
+    if (fullRef.current) {
+      // full access: commands, preview and checks go ahead without asking. GitHub actions still wait for a click.
+      const auto = clean.filter((a) => ['run_command', 'run_preview', 'run_tests'].includes(a.type))
+      const rest = clean.filter((a) => !auto.includes(a))
+      if (auto.length) setTimeout(() => auto.forEach((a) => runAiActionRef.current?.({ ...a, test: true })), 0)
+      if (rest.length) setAiActions(rest)
+      return
+    }
     if (clean.length) setAiActions(clean)
   }
+  const runAiActionRef = useRef(null)
   const runAiAction = (a) => {
     setAiActions((list) => list.filter((x) => x !== a))
     const did = { github_push: ['github', 'Opened the GitHub push window'], github_import: ['github', 'Opened the GitHub import window'], run_preview: ['preview', 'Opened the live preview'], run_tests: ['check', 'Started an error check'] }[a.type]
@@ -411,6 +441,7 @@ const [showLogin, setShowLogin] = useState(false)
     else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
   }
   // ---- commands the AI asked for: run one after another on this computer, then check the preview, then ONE final report ----
+  runAiActionRef.current = runAiAction
   const cmdQueue = useRef([])
   const cmdResults = useRef([])
   const cmdBusy = useRef(false)
@@ -441,6 +472,7 @@ const [showLogin, setShowLogin] = useState(false)
   }
   const finishCommands = async () => {
     cmdBusy.current = false
+    setAiActions((l) => l.filter((x) => x.type !== 'run_command')) // the permission box closes; a new request opens a new one
     const results = cmdResults.current
     cmdResults.current = []
     if (!results.length) return
@@ -453,11 +485,13 @@ const [showLogin, setShowLogin] = useState(false)
       try { await runTestLoop([], cmdGoal.current || 'Check the project works') } catch { /* reported below */ }
       window.removeEventListener('stream-test-result', h)
     }
+    fixRounds.current = 0
     const lines = results.map((r) => `- ${r.running ? '▶️' : '✅'} \`${r.cmd}\` ${r.running ? 'is running with no errors' : 'finished'}`)
     let text = `Everything is done. Here is the full picture:\n\n${lines.join('\n')}`
     if (cmdAnyTest.current) {
       text += `\n\n**Preview check:** ${test ? (test.status === 'ok' ? `I opened ${window.__qodersLocalUrl ? 'your dev server page' : 'the preview'} and found no errors${fixes ? `, after fixing ${fixes} problem${fixes === 1 ? '' : 's'} on the way` : ''}.` : `I opened the preview and some errors are still there: ${test.summary || 'see the console'}. Tell me and I will keep fixing.`) : 'I could not read the preview this time.'}`
     }
+    if (fullRef.current) text += '\n\n**Full access:** I installed, ran and re-checked everything. I cannot see how the page looks, so if something is off visually, tell me what and I will fix it.'
     setMessages((m) => [...m, { role: 'assistant', text, time: Date.now() }])
   }
   const stopCommands = (reason) => { cmdQueue.current = []; cmdBusy.current = false; cmdResults.current = []; void reason }
@@ -474,8 +508,16 @@ const [showLogin, setShowLogin] = useState(false)
           setMessages((m) => [...m, { role: 'assistant', text: `\`${d.cmd}\` ${d.running ? 'printed errors' : `failed (exit code ${d.code})`}.${done.length ? ` Before that this worked: ${done.map((c) => `\`${c}\``).join(', ')}.` : ''} I stopped the rest. Check the terminal, or tell me to fix it.`, time: Date.now() }])
           return
         }
+        if (fullRef.current) {
+          fixRounds.current += 1
+          if (fixRounds.current > 8) {
+            fixRounds.current = 0
+            setMessages((m) => [...m, { role: 'assistant', text: `I tried to fix \`${d.cmd}\` 8 times and it still fails, so I stopped to save your tokens. Look at the terminal, tell me what you see, and I will carry on.`, time: Date.now() }])
+            return
+          }
+        }
         setPendingAi({
-          prompt: `I ran \`${d.cmd}\` in the terminal and it ${d.running ? 'printed errors' : `failed with exit code ${d.code}`}.${done.length ? ` These worked before it: ${done.join(', ')}.` : ''}\n\nTerminal output (end):\n${d.output}\n\nFind the real cause and fix it in the project files. If a package or command is missing, say so.`,
+          prompt: `I ran \`${d.cmd}\` in the terminal and it ${d.running ? 'printed errors' : `failed with exit code ${d.code}`}.${done.length ? ` These worked before it: ${done.join(', ')}.` : ''}\n\nTerminal output (end):\n${d.output}\n\nFind the real cause and fix it in the project files. If a package or command is missing, say so.${fullRef.current ? ` Then add a run_command action to run \`${d.cmd}\` again.` : ''}`,
           shown: `\`${d.cmd}\` had problems, please fix them`,
         })
         setMobileView('ai')
@@ -487,6 +529,17 @@ const [showLogin, setShowLogin] = useState(false)
     window.addEventListener('qoders-run-done', h)
     return () => window.removeEventListener('qoders-run-done', h)
   })
+  // full access: the AI's file changes are applied without the review window
+  useEffect(() => {
+    if (!fullAccess || !pendingPlan || pendingPlan.linkActionId) return
+    const ops = (pendingPlan.plan?.operations || []).filter((op) => op && typeof op.path === 'string' && resolveOp(files, op).errors.length === 0)
+    if (!ops.length) { setPendingPlan(null); return }
+    setEditNote({ title: 'Editing files', sub: ops.slice(0, 2).map((o) => o.path.split('/').pop()).join(', ') + (ops.length > 2 ? ` +${ops.length - 2}` : '') })
+    applyPlan(ops, pendingPlan.plan.explanation, pendingPlan.originalPrompt)
+    const t = setTimeout(() => setEditNote(null), 3500)
+    return () => clearTimeout(t)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPlan, fullAccess])
   const [toast, setToast] = useState(null)
   const [inputModal, setInputModal] = useState(null)
 
@@ -1618,6 +1671,8 @@ case 'importZip': setShowImport(true); break
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
         onAiActions={queueAiActions}
         onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
+        fullAccess={fullAccess}
+        onFullAccessToggle={toggleFullAccess}
         model={settings.model}
         onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
         onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
@@ -1756,6 +1811,8 @@ case 'importZip': setShowImport(true); break
         onApplyPlan={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })}
           onAiActions={queueAiActions}
         onPlanReady={(plan, prompt) => setPendingPlanning({ plan, originalPrompt: prompt })}
+        fullAccess={fullAccess}
+        onFullAccessToggle={toggleFullAccess}
         model={settings.model}
           onModelChange={(m) => setSettings((x) => ({ ...x, model: m }))}
           onThinkingChange={(t) => setSettings((x) => ({ ...x, thinking: t }))}
@@ -1779,7 +1836,8 @@ case 'importZip': setShowImport(true); break
 
  <PlanningModal
         plan={pendingPlanning?.plan}
-        autoStart={!!pendingPlanning?.autoStart}
+        autoStart={!!pendingPlanning?.autoStart || fullAccess}
+        forcePill={fullAccess}
         stepStatuses={planningStepStatuses}
         stepLogs={planningStepLogs}
         running={planningRunning}
@@ -1881,7 +1939,7 @@ case 'importZip': setShowImport(true); break
               }
 
               // Apply the step's operations
-              const ops = Array.isArray(result.operations) ? result.operations : []
+              const ops = (Array.isArray(result.operations) ? result.operations : []).filter((op) => op && typeof op.path === 'string' && op.path.trim() && (!['create_file', 'write_file'].includes(op.type) || typeof (op.content ?? '') === 'string'))
               const before = Object.fromEntries(
                 ops.map((op) => [op.path, currentFiles[op.path]?.content ?? null])
               )
@@ -2109,6 +2167,10 @@ case 'importZip': setShowImport(true); break
           disk={{ folder: diskFolder, canPick: canPickFolder(), choose: diskChoose, saveAll: diskSaveAll }}
         />
       )}
+
+      <RunPill />
+      {fullAccess && aiStreaming && <MinPill anim="thinking" title="AI is working" sub="Thinking and writing…" stack={1} onClick={() => {}} />}
+      {editNote && <MinPill anim="writing" title={editNote.title} sub={editNote.sub} stack={2} onClick={() => setEditNote(null)} />}
 
       {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
         <ActionCard canRun={!!window.desktop?.termRun} actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />

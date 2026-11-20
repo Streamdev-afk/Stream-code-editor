@@ -1,4 +1,5 @@
 import Icon from './Icon'
+import MinPill from './MinPill'
 import { stripMd } from './RichText'
 import { useState, useEffect } from 'react'
 
@@ -19,6 +20,7 @@ export default function PlanningModal({
   currentStepIndex = -1,
   errorMessage = null,
   autoStart = false,
+  forcePill = false,
 }) {
   const [editedSteps, setEditedSteps] = useState(() =>
     (plan?.steps || []).map((s) => ({ ...s, enabled: true }))
@@ -36,6 +38,11 @@ export default function PlanningModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [plan, autoStart])
 
+  const [min, setMin] = useState(false)
+  const [peek, setPeek] = useState(false) // full access: open the window anyway
+  useEffect(() => { if (!running) setMin(false) }, [running])
+  useEffect(() => { setPeek(false) }, [plan])
+
   if (!plan) return null
 
   const toggleStep = (id) => {
@@ -44,6 +51,15 @@ export default function PlanningModal({
   }
 
   const enabledCount = editedSteps.filter((s) => s.enabled).length
+
+  if (forcePill && !peek && !errorMessage) {
+    const cur = editedSteps.filter((x) => x.enabled)[currentStepIndex]
+    return <MinPill anim={running ? 'writing' : 'thinking'} title={running ? `Step ${currentStepIndex + 1} of ${enabledCount}` : 'Starting'} sub={stripMd(cur?.title || 'Getting the plan ready')} onClick={() => setPeek(true)} />
+  }
+  if (min && running) {
+    const cur = editedSteps.filter((x) => x.enabled)[currentStepIndex]
+    return <MinPill anim="writing" title={`Step ${currentStepIndex + 1} of ${enabledCount}`} sub={stripMd(cur?.title || 'Working')} onClick={() => setMin(false)} />
+  }
 
   const icon = (status) => {
     if (status === STATUS.done) return '✅'
@@ -65,6 +81,7 @@ export default function PlanningModal({
               </div>
             </div>
           </div>
+          {running && <button className="modal-min" onClick={() => setMin(true)} title="Minimize. It keeps working.">–</button>}
           <button className="modal-close" onClick={onReject} disabled={running}><Icon name="close" size={16} strokeWidth={2.2} /></button>
         </div>
 

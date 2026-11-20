@@ -61,6 +61,9 @@ export function applyEdits(content, edits) {
   return { content: out, errors }
 }
 
+// A model sometimes sends code with the two characters \ and n instead of real line breaks. Put the line breaks back.
+export const fixFlat = (t) => (typeof t === 'string' && !t.includes('\n') && /\\n/.test(t) ? t.replace(/\\r\\n|\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"') : t)
+
 export function resolveOp(files, op) {
   const existing = files?.[op.path]
   const before = existing?.content ?? ''
@@ -72,9 +75,13 @@ export function resolveOp(files, op) {
     const edits = Array.isArray(op.edits)
       ? op.edits
       : op.find != null ? [{ find: op.find, replace: op.replace }] : []
-    const r = applyEdits(before, edits)
+    const fixed = edits.map((e) => {
+      const f = typeof e?.find === 'string' && !before.includes(e.find) && before.includes(fixFlat(e.find)) ? fixFlat(e.find) : e?.find
+      return { ...e, find: f, replace: before.includes('\n') ? fixFlat(e?.replace) : e?.replace }
+    })
+    const r = applyEdits(before, fixed)
     return { before, after: r.content, errors: r.errors }
   }
 
-  return { before, after: op.content ?? '', errors: [] }
+  return { before, after: fixFlat(op.content ?? ''), errors: [] }
 }

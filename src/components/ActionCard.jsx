@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import Icon from './Icon'
+import MinPill from './MinPill'
 
 const INFO = {
   github_push: { icon: 'push', title: 'Push project to GitHub', note: 'Opens the push window. Nothing is sent until you confirm there.' },
@@ -14,12 +16,20 @@ const INFO = {
 /** The AI can only PROPOSE these. Each one needs your click. */
 export default function ActionCard({ actions, onApprove, onDismiss, canRun = false }) {
   const cmds = actions.filter((x) => x.type === 'run_command')
+  const [min, setMin] = useState(false)
+  if (!actions.length) return null
+  if (min) return <MinPill anim="thinking" title="Waiting for you" sub={`${actions.length} request${actions.length === 1 ? '' : 's'} need your answer`} onClick={() => setMin(false)} stack={1} />
   return (
-    <div className="action-card" role="dialog" aria-label="Qoders wants to do something">
-      <div className="action-card-head"><Icon name="bolt" size={14} /> {actions.some((x) => x.fromIon) ? 'An ION AI asks permission' : 'Qoders asks permission'}</div>
+    <div className="modal-backdrop action-backdrop">
+    <div className="modal action-card" role="dialog" aria-label="Qoders wants to do something" onClick={(e) => e.stopPropagation()}>
+      <div className="action-card-head">
+        <Icon name="bolt" size={14} /> {actions.some((x) => x.fromIon) ? 'An ION AI asks permission' : 'Qoders asks permission'}
+        <button className="modal-min" onClick={() => setMin(true)} title="Minimize">–</button>
+      </div>
       {canRun && cmds.length > 1 && (
         <div className="action-all">
           <span>{cmds.length} commands, run one after another on your computer</span>
+          <button className="action-btn ghost" onClick={() => cmds.forEach((c) => onApprove({ ...c, test: false }))}>Run all</button>
           <button className="action-btn" onClick={() => cmds.forEach((c) => onApprove({ ...c, test: true }))}>Run all &amp; test</button>
         </div>
       )}
@@ -54,6 +64,7 @@ export default function ActionCard({ actions, onApprove, onDismiss, canRun = fal
           </div>
         )
       })}
+    </div>
     </div>
   )
 }

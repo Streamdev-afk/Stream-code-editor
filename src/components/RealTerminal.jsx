@@ -178,7 +178,9 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
       // a server that keeps running: look at what it printed so far after 20 seconds
       pending.current.timer = setTimeout(() => finishAi(null, true), 20000)
       termRef.current.focus()
-      window.desktop.ptyWrite(id, `${d.cmd}${done}\r`)
+      // Windows PowerShell 5 does not understand &&, so the steps are chained with ; (cd then the command still works)
+      const cmdText = sh.includes('powershell') ? d.cmd.replace(/\s*&&\s*/g, '; ') : d.cmd
+      window.desktop.ptyWrite(id, `${cmdText}${done}\r`)
     }
     const pendingRun = window.__qodersPendingRun
     if (pendingRun) { window.__qodersPendingRun = null; go(pendingRun) }
