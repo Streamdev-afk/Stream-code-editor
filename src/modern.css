@@ -1212,3 +1212,23 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .full-access-row { position: relative; flex-wrap: wrap; }
 .full-access-row input:checked + .full-access-tip, .full-access-row:hover .full-access-tip { display: block; }
 .full-access-tip { display: none; flex: 1 1 100%; margin-top: 6px; padding: 8px 10px; border-radius: 8px; font-size: 11.5px; line-height: 1.45; color: #fbbf24; background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.3); }
+
+/* AI status animations (pure SVG/CSS) */
+.ai-anim { display: inline-flex; align-items: center; justify-content: center; flex: none; }
+.aa { color: var(--accent, #7c9cff); }
+.aa-dot { fill: currentColor; transform-box: fill-box; transform-origin: center; animation: aa-bounce 1.1s ease-in-out infinite; }
+.aa-d2 { animation-delay: .15s } .aa-d3 { animation-delay: .3s }
+@keyframes aa-bounce { 0%,70%,100% { transform: translateY(0) scale(.8); opacity: .5 } 35% { transform: translateY(-9px) scale(1.1); opacity: 1 } }
+.aa-line { fill: currentColor; opacity: .85; transform-box: fill-box; transform-origin: left center; animation: aa-type 2.4s ease-in-out infinite; }
+.aa-l2 { animation-delay: .5s } .aa-l3 { animation-delay: 1s }
+@keyframes aa-type { 0% { transform: scaleX(0) } 45%,85% { transform: scaleX(1) } 100% { transform: scaleX(0); opacity: .3 } }
+.aa-caret { fill: currentColor; animation: aa-blink .8s steps(2) infinite, aa-caret-move 2.4s ease-in-out infinite; }
+@keyframes aa-blink { 50% { opacity: 0 } }
+@keyframes aa-caret-move { 0%,100% { transform: translate(0,0) } 33% { transform: translate(24px,10px) } 66% { transform: translate(18px,20px) } }
+.aa-ring { stroke: currentColor; stroke-dasharray: 60 45; transform-origin: 24px 24px; animation: aa-spin 1s linear infinite; }
+@keyframes aa-spin { to { transform: rotate(360deg) } }
+.aa-chev { stroke: currentColor; animation: aa-pulse 1s ease-in-out infinite; }
+@keyframes aa-pulse { 50% { opacity: .35 } }
+.aa-done-ring { stroke: #3ecf8e; opacity: .35 }
+.aa-check { stroke: #3ecf8e; stroke-dasharray: 40; stroke-dashoffset: 40; animation: aa-draw .5s ease-out forwards; }
+@keyframes aa-draw { to { stroke-dashoffset: 0 } }
