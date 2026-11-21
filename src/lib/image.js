@@ -1,5 +1,5 @@
 // Shrinks a picked/pasted image to a small JPEG data URL so it can be sent to the AI cheaply.
-export function fileToDataUrl(file, maxSide = 1280, quality = 0.82) {
+export function fileToDataUrl(file, maxSide = 896, quality = 0.7) {
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file)
     const img = new Image()

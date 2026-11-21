@@ -150,8 +150,16 @@ ipcMain.handle('pty-open', (e, { id, cwd, cols, rows }) => {
 })
 ipcMain.on('pty-write', (_e, { id, data }) => { const t = ptys.get(id); if (t && typeof data === 'string') t.proc.write(data) })
 ipcMain.on('pty-resize', (_e, { id, cols, rows }) => { const t = ptys.get(id); if (t && cols > 0 && rows > 0) { try { t.proc.resize(cols, rows) } catch {} } })
-ipcMain.handle('pty-kill', (_e, id) => { const t = ptys.get(id); if (t) { try { t.proc.kill() } catch {} ptys.delete(id) } return true })
-app.on('before-quit', () => { for (const t of ptys.values()) { try { t.proc.kill() } catch {} } })
+// stop a shell AND everything it started (a dev server keeps running otherwise)
+const killTree = (t) => {
+  try {
+    if (process.platform === 'win32' && t.proc.pid) require('child_process').spawn('taskkill', ['/pid', String(t.proc.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' })
+    else if (t.proc.pid) { try { process.kill(-t.proc.pid, 'SIGKILL') } catch {} }
+  } catch {}
+  try { t.proc.kill() } catch {}
+}
+ipcMain.handle('pty-kill', (_e, id) => { const t = ptys.get(id); if (t) { killTree(t); ptys.delete(id) } return true })
+app.on('before-quit', () => { for (const t of ptys.values()) killTree(t) })
 
 // ---------- fallback terminal (only used if the engine above is missing): runs commands", on this computer, inside the project's folder ----------
 const runs = new Map()

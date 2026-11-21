@@ -22,6 +22,12 @@ const Editor = forwardRef(function Editor(
   ref
 ) {
   const editorRef = useRef(null)
+  // re-measure after the layout around the editor changes (terminal panel shown or hidden)
+  useEffect(() => {
+    const h = () => { try { editorRef.current?.layout() } catch { /* ignore */ } }
+    window.addEventListener('qoders-relayout', h)
+    return () => window.removeEventListener('qoders-relayout', h)
+  }, [])
   const monacoRef = useRef(null)
   const formattedRef = useRef('')
 

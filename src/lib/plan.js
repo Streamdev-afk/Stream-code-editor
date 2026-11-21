@@ -5,8 +5,9 @@ import { supabase } from './supabase'
 export const PLAN_RANK = { free: 0, go: 1, plus: 2, pro: 3, max: 4 }
 export const PLAN_NAME = { free: 'Free', go: 'Go', plus: 'Plus', pro: 'Pro', max: 'Max' }
 // the lowest plan that gets each feature
-export const FEATURE_MIN = { fullAccess: 'go', team: 'plus', crew: 'plus', thinkHigh: 'plus', thinkUltra: 'pro' }
-export const THINK_MIN = { high: 'plus', ultra: 'pro' }
+export const FEATURE_MIN = { fullAccess: 'go', team: 'plus', crew: 'plus' }
+// thinking levels are open to every plan: higher levels just use more credits
+export const THINK_MIN = {}
 
 let cache = { plan: 'free', models: {}, at: 0, loaded: false }
 const listeners = new Set()

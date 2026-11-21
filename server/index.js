@@ -173,7 +173,27 @@ async function fallbackModels(exclude, vision = false) {
 
 // Streams a completion with automatic recovery: empty reply, tool-call confusion or an unavailable
 // model move on to the next available model (only possible while no text has been sent yet).
+// Free models served through OpenRouter (the key lives in the OPENROUTER_API_KEY setting on this server)
+const OR_BASE = 'https://openrouter.ai/api/v1'
+const isOrModel = (m) => /:free$/.test(String(m || ''))
 async function* guardedStream(params) {
+  if (!getByok() && process.env.OPENROUTER_API_KEY && isOrModel(params.model)) {
+    let got = false
+    try {
+      for await (const chunk of await byokCreate(params, { key: process.env.OPENROUTER_API_KEY, model: params.model, base: OR_BASE })) {
+        if (chunk.choices?.[0]?.delta?.content) got = true
+        yield chunk
+      }
+      if (got) return
+      console.log(`[ai] empty reply from ${params.model}`)
+    } catch (e) {
+      if (got) throw e
+      console.log(`[ai] ${params.model} failed: ${String(e?.message || e).slice(0, 160)}`)
+    }
+    // the free model failed or was busy: carry on with the normal Groq models
+    const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest } = params
+    params = { ...rest, model: PREFERRED[1] }
+  }
   { // your own key: one straight attempt, no model hopping
     const b = getByok()
     if (b) {
@@ -237,7 +257,11 @@ async function callGroqWithRetry(params, maxAttempts = 4) {
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      { const b = getByok(); if (b) return await byokCreate(params, b) }
+      const b0 = getByok()
+      if (b0) return await byokCreate(params, b0)
+      if (!b0 && process.env.OPENROUTER_API_KEY && isOrModel(params.model)) {
+        try { return await byokCreate(params, { key: process.env.OPENROUTER_API_KEY, model: params.model, base: OR_BASE }) } catch (e) { params = { ...params, model: 'openai/gpt-oss-20b' } }
+      }
       { const { __fb, ...p } = params; return await groq.chat.completions.create(p) }
     } catch (err) {
       lastErr = err
@@ -491,6 +515,8 @@ FOLLOW THE PROJECT
 - Never break existing features. When editing, change the smallest part that does the job.
 
 WRITE CODE THAT RUNS THE FIRST TIME
+- You can also just talk. If the user greets you, makes small talk, thanks you or asks a question that needs no file changes, answer like a friendly person in "explanation" (a few natural sentences, you may ask them something back), with "operations" empty. Do not refuse, do not say you can only edit files, and do not create files they did not ask for.
+- In Agent mode ALL code goes into "operations" (files created or edited). NEVER paste code or file contents into "explanation" or the reply text; the explanation is one or two plain sentences.
 - FORMAT code like a human developer: one statement or property per line, 2-space indentation, every HTML tag/CSS rule/JS block on its own lines, blank line between sections. NEVER minify or put code on one line.\n- Complete, working code. No TODO, no "...", no placeholder functions, no lorem ipsum unless asked.
 - NEVER reference local files that do not exist (images/photo.jpg, logo.png...). For pictures use inline SVG, CSS gradients, emoji, or https://picsum.photos/seed/<word>/600/400 so nothing shows as broken.
 - Every id, class, import, script src and link must match something that exists. Check this before you answer.
@@ -656,6 +682,7 @@ app.post('/api/edit', async (req, res) => {
 })
 
 app.post('/api/agent', async (req, res) => {
+  if (req.body && req.body.forceFiles) req.body.prompt = String(req.body.prompt || '') + '\n\n(IMPORTANT: your last answer pasted code into the reply. Put ALL code into operations as created or edited files. The explanation must be plain words with no code.)'
   const { prompt, files, activeFile, history, model, thinking, behavior } = req.body
   const team = req.body.team === true
   const teamSize = Math.min(8, Math.max(2, Number(req.body.teamSize) || 3))
@@ -706,7 +733,7 @@ You respond with ONLY a JSON object:
 - github_import: the user wants to import a GitHub repo (opens the import dialog); optional "repo": "owner/name" (only if the user named it)
 - run_preview: the user wants to see the project running (opens the live preview)
 - run_tests: the user wants the project checked for errors
-- run_command: a terminal command the project needs to work, for example npm install, npm run dev, npx something, python script.py. Put the exact command in "command" (one line) and why in "message". The user chooses: run it and test, just run it, or cancel and run it themselves. Use it when files you wrote need packages installed or a script run. Never claim it ran.
+- run_command: a terminal command the project needs to work, for example npm install, npm run dev, npx something, python script.py. Put the exact command in "command" (one line) and why in "message". The user chooses: run it and test, just run it, or cancel and run it themselves. Use it ONLY when the user asked you to run, install, start or test something. If they did not ask, never add a run_command: write the commands they would need as a short copyable code block at the end of your message ("To run it: ...") and stop. Never claim it ran.
 When the user asks you to run something (install, start, test, a script, adb), do NOT write a README or a how-to file: answer with a run_command action holding the exact command. When the user says a command failed or to look at the terminal, read the Terminal part of RECENT LOGS in the app context, name the cause in one or two sentences, fix the files if the fix is in the project, and propose the corrected run_command. Never claim you ran it yourself.
 Never say you pushed, imported or ran something. Say it is waiting for their approval. If the user only asks for these actions, "operations" can be an empty list.
 
@@ -812,7 +839,7 @@ function rulesBlock(req, lite) {
 - If the existing files already live in one main folder, keep working inside that folder. Do not make a second one.
 - If the user wants a new project and did not give it a name, and questions are allowed, ask for the project name first (suggest 2 short names; they can type their own). Use the name they pick for the folder.
 - Terminal commands run in the project's folder on the user's computer. If package.json sits in a subfolder of that folder, write commands like "cd my-site && npm install".
-- A project with a package.json (Vite, React, Next, TypeScript, 3D) cannot show in the plain inline preview. After writing its files, propose run_command actions: "npm install" then "npm run dev", and tell the user the Local tab will show the running site.`
+- A project with a package.json (Vite, React, Next, TypeScript, 3D) cannot show in the plain inline preview. After writing its files, tell the user the commands (npm install, then npm run dev) in a copyable code block and that the Local tab will show the running site. Only add run_command actions if the user asked to run it.`
     const ctx = clip(b.appContext, 7000)
     if (ctx) out += `\n\n## ABOUT THE EDITOR AND THE USER\n${ctx}`
   }
@@ -823,12 +850,14 @@ function askBlock(req, mode) {
   if (req.body?.allowQuestions === false) {
     return `\n\n## QUESTIONS\nDo NOT ask the user any questions. Make sensible assumptions and say in one line what you assumed.`
   }
-  const how = mode === 'chat'
-    ? `Put it at the very END of your reply, on its own lines, exactly like this (valid JSON inside):\n[[ASK]]{"question":"Which style do you want?","options":["Minimal","Colorful","Dark"],"multi":false}[[/ASK]]`
-    : `Return it in the JSON field "ask" like {"question":"Which style do you want?","options":["Minimal","Colorful","Dark"],"multi":false} and leave "operations" (or "steps") empty.`
+  if (mode === 'chat') {
+    return `\n\n## QUESTIONS\nIn chat mode never open a question pop-up. If you really need an answer, ask it in plain words at the end of your reply and wait for the user to write back.`
+  }
+  const how = `Return it in the JSON field "ask" like {"question":"Which style do you want?","options":["Minimal","Colorful","Dark"],"multi":false} and leave "operations" (or "steps") empty.`
   return `\n\n## QUESTIONS
-Ask ONLY when you truly cannot continue without a choice that changes the result (for example which framework, which design direction, or which of two very different meanings). Never ask about things you can reasonably decide yourself, and never ask more than one question at a time.
-${how}
+ASK FIRST on new work: when the user asks you to build or start a NEW project, app, website, set of pages or a big feature, and nothing in the conversation has answered it yet (no CONFIRMED SPEC, no earlier answers), do NOT start writing. Ask the single most important thing you need (what exactly they want: purpose, look/style, pages or features, tech) and leave "operations" (or "steps") empty. After they answer you may ask one more, at most 3 questions in total, then build exactly what they chose. Never invent extra features they did not ask for: add only what was asked, and offer extras as a suggestion in the summary.
+Do not ask for small edits, bug fixes, clear specific instructions, or when the user says to just do it or decide yourself. Also ask when you get stuck or confused while working and a wrong guess would waste work.
+Never ask more than one question at a time. ${how}
 Give 2 to 5 short options (the user can also type their own answer). Set "multi" to true only if several can be picked.
 If the user told you not to ask questions, or to just decide, NEVER ask: choose sensible defaults and say what you chose.`
 }

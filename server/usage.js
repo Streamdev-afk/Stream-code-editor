@@ -189,6 +189,7 @@ async function getEntry(key) {
  * `cost` is the number of units the request will consume.
  */
 export async function checkLimit(req, cost = 1) {
+  cost = Math.max(cost > 0 ? 1 : 0, Math.ceil(cost * (req.creditWeight || 1)))
   const key = getUserKey(req)
   const tier = await resolveTier(req)
   const limits = TIER_LIMITS[tier]
@@ -205,13 +206,13 @@ export async function checkLimit(req, cost = 1) {
     if (shortBlocked) {
       const resetIn = Math.ceil((SHORT_WINDOW_MS - (Date.now() - entry.shortWindowStart)) / (60 * 1000))
       message = tier === 'anonymous'
-        ? `Guest daily limit reached (${limits.short} requests). Sign in for more. Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
-        : `Daily limit reached (${limits.short} requests). ${tier === 'free' ? 'Upgrade for more. ' : ''}Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
+        ? `Guest daily limit reached (${limits.short} credits). Sign in for more. Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
+        : `Daily limit reached (${limits.short} credits). ${tier === 'free' ? 'Upgrade for more. ' : ''}Resets at midnight UTC (in ${Math.ceil(resetIn / 60)}h).`
     } else {
       const resetIn = Math.ceil((LONG_WINDOW_MS - (Date.now() - entry.longWindowStart)) / (24 * 60 * 60 * 1000))
       message = tier === 'anonymous'
-        ? `Guest total limit reached (${limits.long} requests). Sign in for more — resets in ${resetIn} days.`
-        : `2-week limit reached (${limits.long} requests). Upgrade for more — resets in ${resetIn} days.`
+        ? `Guest total limit reached (${limits.long} credits). Sign in for more — resets in ${resetIn} days.`
+        : `2-week credit limit reached (${limits.long} credits). Upgrade for more — resets in ${resetIn} days.`
     }
     return {
       allowed: false,
@@ -266,6 +267,7 @@ export async function checkLimit(req, cost = 1) {
  * Record a completed request. `cost` is the number of units consumed.
  */
 export function recordUsage(req, cost = 1, { tokens = 0 } = {}) {
+  cost = cost > 0 ? Math.max(1, Math.ceil(cost * (req.creditWeight || 1))) : 0
   const key = getUserKey(req)
   // memory copy (backup if the database is down)
   const entry = getOrCreateEntry(key)

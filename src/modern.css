@@ -918,7 +918,7 @@ html:not([data-liquid="off"]) .tab:hover:not(.active) { transform: translateY(-1
 html:not([data-liquid="off"]) .sidebar-wrap { animation: mo-slide-left .45s var(--spring) both; }
 html:not([data-liquid="off"]) .sidebar-wrap > .filetree, html:not([data-liquid="off"]) .sidebar-wrap > .search-panel, html:not([data-liquid="off"]) .sidebar-wrap > .history-panel { animation: mo-fade-up .32s var(--smooth) both; }
 html:not([data-liquid="off"]) .main > .aichat { animation: mo-slide-right .5s var(--spring) both; }
-html:not([data-liquid="off"]) .bottom-panel { animation: mo-slide-up .45s var(--spring) both; }
+html:not([data-liquid="off"]) .bottom-panel { animation: none; }
 html:not([data-liquid="off"]) .preview-wrap, html:not([data-liquid="off"]) .empty-editor { animation: mo-fade-up .35s var(--smooth) both; }
 html:not([data-liquid="off"]) .tree-row { animation: mo-row .22s var(--smooth) both; }
 html:not([data-liquid="off"]) .sidebar-tab { transition: transform .3s var(--spring), color .2s, background-color .2s; }
@@ -1234,3 +1234,8 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 @keyframes aa-draw { to { stroke-dashoffset: 0 } }
 .chat-stop { background: #e5484d !important; color: #fff !important; }
 .crew-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.byok-list { max-height: 220px; overflow: auto; margin-top: 6px; border: 1px solid var(--border, rgba(255,255,255,.1)); border-radius: 10px; }
+.byok-item { display: flex; justify-content: space-between; gap: 8px; width: 100%; text-align: left; padding: 7px 10px; background: transparent; border: 0; color: inherit; cursor: pointer; font-size: 12.5px; }
+.byok-item:hover { background: rgba(255,255,255,.06); }
+.byok-item.on { background: rgba(124,156,255,.18); }
+.byok-item em { font-style: normal; font-size: 10.5px; color: #3ecf8e; }

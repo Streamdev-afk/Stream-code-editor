@@ -2,6 +2,8 @@
 // Kept in a small module so every request can read it without passing props around.
 const state = { terminal: [], console: [], github: null, aiName: '', userName: '', memory: '', progress: '', workspace: '' }
 export const setCtx = (key, value) => { state[key] = value }
+// a different project/session starts: forget its terminal output, console errors and unfinished-work notes
+export const resetSessionCtx = () => { state.terminal = []; state.console = []; state.progress = '' }
 
 const GUIDE = `You are the AI inside ION Qoders, a code editor that runs in the browser and as a desktop app. You know how it works:
 - Left: file explorer (new file/folder, rename, delete, drag). Top tabs for open files. Center: Monaco code editor (Ctrl+S saves; on desktop it saves to the user's laptop folder).

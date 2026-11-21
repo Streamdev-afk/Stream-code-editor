@@ -46,7 +46,7 @@ function WindowBar({ label, windowData, windowLabel }) {
       </div>
       <div className="usage-window-stats">
         <span className="usage-window-count">
-          <strong>{windowData.used}</strong> / {windowData.limit}
+          <strong>{windowData.used}</strong> / {windowData.limit} credits
         </span>
         <span className="usage-window-percent">
           {percent}% used
@@ -159,7 +159,7 @@ export default function UsageDropdown({ onUpgrade, onManage }) {
           {usage.tier === 'anonymous' && (
             <div className="usage-menu-cta">
               <div className="usage-cta-text">
-                Sign in to unlock <strong>50 per day</strong> and <strong>500 per 2 weeks</strong>
+                Sign in to unlock <strong>50 credits per day</strong> and <strong>500 per 2 weeks</strong>
               </div>
             </div>
           )}

@@ -241,9 +241,14 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
 
 const remapResult = (args, r) => { if (r && Array.isArray(r.operations)) r.operations = remapOps(args?.files, r.operations); return r }
 
+// Agent mode must edit files. If the reply has no file changes but pastes a lot of code, ask once more, firmly.
+const pastedCode = (r) => r && !(r.operations || []).length && !r.ask && /```[\s\S]{200,}```/.test(String(r.explanation || r.text || r.raw || ''))
+
 export async function streamAgent(args, onChunk, onStatus) {
   try {
-    return remapResult(args, await runExplorable('/api/agent', args, onChunk, onStatus, 'Agent'))
+    const r = await runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
+    if (pastedCode(r)) return remapResult(args, await runExplorable('/api/agent', { ...args, strict: true, forceFiles: true }, onChunk, onStatus, 'Agent'))
+    return remapResult(args, r)
   } catch (e) {
     if (!e.parseFail) throw e
     // an answer that could not be read: ask once more, shorter and stricter, before giving up

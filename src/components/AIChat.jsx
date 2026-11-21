@@ -34,6 +34,9 @@ const parseShellRequest = (text) => {
 }
 
 // asking to run something, or to look at a terminal error: no plan, the agent answers directly and proposes the command
+const RUN_ASK = /\b(run|execute|start|launch|install|build|test|serve|deploy|npm|npx|yarn|pnpm|node|python|pip|adb|terminal|command|dev server|compile)\b/i
+// small talk or a plain question with no file work: the agent just answers like a person, no plan
+const CASUAL = /^(?!.*\b(create|make|build|add|fix|change|edit|update|write|remove|delete|rename|implement|refactor|generate|design|style|convert|move|replace|install|run)\b)[\s\S]{0,160}$/i
 const RUN_INTENT = /(\b(run|execute|start|launch|install)\b.*\b(npm|npx|yarn|pnpm|node|python|pip|git|adb|dev server|server|command|packages|dependencies)\b)|\bnpm (i|install|run|start|test|ci)\b|\b(look|check|see|read)\b.*\bterminal\b|\bterminal\b.*\b(error|output|failed|says|gave)\b|\b(gave|got|throws?|showing)\b.*\berror\b/i
 const FIX_IT = /^\s*(yes|yeah|yep|ok(ay)?|sure|please|fix( it| them| that)?|try again|retry|continue|go ahead|do it|yes please)[\s.!]*$/i
 const GO_AHEAD = /\b(start|begin|go ahead|get going|let'?s go|do it|build it|make it|continue|proceed|implement)\b/i
@@ -338,7 +341,7 @@ useEffect(() => {
     setMessages([...messages, { role: 'user', text, time: Date.now() }, { role: 'assistant', text: 'Researcher: starting…', time: Date.now(), _status: true }])
     setStreaming(true)
     try {
-      const { notes, sources } = await crewResearch({ prompt: text, model, behavior, onStatus: setLast })
+      const { notes, sources } = await crewResearch({ prompt: text, files, model, behavior, onStatus: setLast })
       const spec = await crewAnalyze({ prompt: text, notes, files, activeFile, model, behavior, onStatus: setLast })
       const links = sources.slice(0, 4).map((s) => `- [${s.title || s.url}](${s.url})`).join('\n')
       setMessages((m) => {
@@ -362,6 +365,8 @@ useEffect(() => {
   }
 
   const sendAgent = async (text, imgs = [], shown, noCrew) => {
+    // commands only run (or pop up) when the user asked for it; an automatic fix round or the crew spec counts as asked
+    window.__qodersRunOk = shown === null || RUN_ASK.test(text.split('\n\nCONFIRMED SPEC')[0])
     const cmds = [] // terminal commands the AI ran to read your code this turn
     const acts = (extra = []) => [...cmds.map((c) => ({ kind: 'terminal', title: 'Read your code in the terminal', detail: c })), ...extra]
     // shows which terminal command the AI is running to read your code
@@ -382,7 +387,7 @@ useEffect(() => {
 
     try {
       // If planning mode is on, plan first
-      if (planningMode && onPlanReady && !RUN_INTENT.test(text)) {
+      if (planningMode && onPlanReady && !RUN_INTENT.test(text) && !CASUAL.test(text)) {
         let planResult = null
         try { planResult = await planTask(
   { prompt: text, files, activeFile, history: messages, model, thinking, behavior, images: imgs, team: !!team, teamSize: getTeamMembers().length, onStatus: showReading },
@@ -512,7 +517,8 @@ setMessages((m) => {
     if (!last || last.role !== 'assistant' || last._askDone || !/\[\[ASK\]\]/.test(last.text || '')) return
     const { text, ask: q } = extractAsk(last.text)
     setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...last, text, _askDone: true }; return c })
-    if (q && askQuestionsOn()) setAsk({ ...q, mode: 'chat' })
+    // chat mode is just chatting: no question pop-up (the question stays in the text)
+    if (q) setMessages((m) => { const c = [...m]; c[c.length - 1] = { ...c[c.length - 1], text: (text + '\n\n' + q.question + (q.options && q.options.length ? '\n' + q.options.map((o) => '- ' + o).join('\n') : '')).trim(), _askDone: true }; return c })
   }, [streaming, messages])
 
   // "Select" in the preview: run the described change as an agent request

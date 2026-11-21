@@ -11,11 +11,14 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
     const onUrl = (e) => { setLocalUrl(e.detail.url); setMode('local'); setKey((k) => k + 1) }
     const onMode = (e) => { if (e.detail?.mode) setMode(e.detail.mode) }
     const onReload = () => setKey((k) => k + 1)
+    const onClear = () => { setLocalUrl(''); setMode((m) => (m === 'local' ? 'inline' : m)); setKey((k) => k + 1) }
+    window.addEventListener('qoders-local-url-clear', onClear)
     window.addEventListener('qoders-local-url', onUrl)
     window.addEventListener('qoders-preview-mode', onMode)
     window.addEventListener('qoders-preview-reload', onReload)
     return () => {
       window.removeEventListener('qoders-local-url', onUrl)
+      window.removeEventListener('qoders-local-url-clear', onClear)
       window.removeEventListener('qoders-preview-mode', onMode)
       window.removeEventListener('qoders-preview-reload', onReload)
     }

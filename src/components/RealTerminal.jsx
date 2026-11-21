@@ -93,6 +93,20 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
     if (cut !== -1 && /^ION_DONE_\w*-?\d*$/.test(buf.slice(cut))) { term.write(buf.slice(0, cut)); p.carry = buf.slice(cut) } else term.write(buf)
   }
 
+  // switching to another project stops the old project's shell and its dev server, and forgets its preview address
+  const lastProj = useRef(projectId)
+  useEffect(() => {
+    const prev = lastProj.current
+    lastProj.current = projectId
+    if (prev && prev !== projectId && window.desktop?.ptyKill) {
+      const old = `pty-${prev}`
+      try { window.desktop.ptyWrite(old, '\x03') } catch { /* ignore */ }
+      setTimeout(() => { try { window.desktop.ptyKill(old) } catch { /* ignore */ } }, 400)
+      window.__qodersLocalUrl = ''
+      window.dispatchEvent(new CustomEvent('qoders-local-url-clear'))
+    }
+  }, [projectId])
+
   // start the shell and show it
   useEffect(() => {
     let disposed = false

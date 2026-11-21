@@ -13,8 +13,8 @@ let models = { at: 0, map: new Map() }
 async function modelRanks() {
   if (Date.now() - models.at < 5 * 60 * 1000) return models.map
   try {
-    const { data } = await admin.from('ai_models').select('id, min_plan, active')
-    models = { at: Date.now(), map: new Map((data || []).filter((m) => m.active !== false).map((m) => [m.id, PLAN_RANK[m.min_plan] ?? 0])) }
+    const { data } = await admin.from('ai_models').select('id, min_plan, active, credit_cost')
+    models = { at: Date.now(), map: new Map((data || []).filter((m) => m.active !== false).map((m) => [m.id, { rank: PLAN_RANK[m.min_plan] ?? 0, cost: Math.max(1, Number(m.credit_cost) || 1) }])) }
   } catch { models.at = Date.now() - 4 * 60 * 1000 }
   return models.map
 }
@@ -26,11 +26,11 @@ export async function planGate(req, _res, next) {
     const rank = RANK[tier] ?? 0
     const b = req.body
     if (rank < 1) b.fullAccess = false
-    if (rank < 2) { b.team = false; if (b.thinking === 'high') b.thinking = 'medium' }
-    if (rank < 3 && b.thinking === 'ultra') b.thinking = 'high'
+    if (rank < 2) b.team = false
     if (b.model && admin) {
-      const need = (await modelRanks()).get(b.model)
-      if (need !== undefined && need > rank) delete b.model // falls back to the server's default model
+      const info = (await modelRanks()).get(b.model)
+      if (info && info.rank > rank) delete b.model // falls back to the server's default model
+      else if (info) req.creditWeight = info.cost
     }
   } catch { /* never block a request because the gate failed */ }
   next()

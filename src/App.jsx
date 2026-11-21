@@ -16,7 +16,7 @@ import { streamEdit, streamAgent } from './lib/ai'
 import { resolveOp } from './lib/ops'
 import { stopAI } from './lib/supabase'
 import { usePlan } from './lib/plan'
-import { setCtx as setAiCtx } from './lib/appContext'
+import { setCtx as setAiCtx, resetSessionCtx } from './lib/appContext'
 import ProjectMenu from './components/ProjectMenu'
 import './App.css'
 import './modern.css'
@@ -415,6 +415,12 @@ const [showLogin, setShowLogin] = useState(false)
     return () => window.removeEventListener('qoders-ai-state', h)
   }, [])
   // ---- what the AI knows about where the project lives ----
+  // the editor must re-measure when the terminal panel is shown/hidden (it animates in)
+  useEffect(() => {
+    const ts = [30, 200, 520, 900].map((ms) => setTimeout(() => { window.dispatchEvent(new Event('qoders-relayout')); window.dispatchEvent(new Event('resize')) }, ms))
+    return () => ts.forEach(clearTimeout)
+  }, [bottomOpen])
+  useEffect(() => { resetSessionCtx() }, [activeSession?.id])
   const planInfo = usePlan()
   useEffect(() => { if (fullAccess && planInfo.loaded && !planInfo.can('fullAccess')) toggleFullAccess(false) }, [planInfo.plan, planInfo.loaded, fullAccess])
   useEffect(() => {
@@ -454,7 +460,14 @@ const [showLogin, setShowLogin] = useState(false)
     }
     const tree = [...tops.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 60).map(([k, n]) => (k.endsWith('/') ? `  ${k} (${n} files)` : `  ${k}`)).join('\n')
     const sample = paths.slice(0, 80).map((p) => `  ${p}`).join('\n')
-    setAiCtx('workspace', `## WORKSPACE (where everything lives, read before any command)\n`
+    let stack = 'a plain static website (HTML/CSS/JavaScript). It has no package.json: do not mention Vite, npm, bundlers or build configs unless the user asks for them.'
+    try {
+      const pj = files['package.json']?.content
+      if (pj) { const j = JSON.parse(pj); stack = `a Node project (${Object.keys({ ...(j.dependencies || {}), ...(j.devDependencies || {}) }).slice(0, 12).join(', ') || 'no dependencies yet'}); scripts: ${Object.keys(j.scripts || {}).join(', ') || 'none'}.` }
+      else if (files['pubspec.yaml']) stack = 'a Flutter/Dart project.'
+      else if (Object.keys(files).some((p) => p.endsWith('.py'))) stack = 'a Python project.'
+    } catch { /* keep the guess */ }
+    setAiCtx('workspace', `## WORKSPACE (where everything lives, read before any command)\nTHIS project is ${stack}\nFocus only on THIS project and the files listed below. Do not bring up tools, configs or problems from earlier projects or chats (for example Vite or npm if this project has none) unless the user asks about them; if the user mentions an earlier project you may talk about it.\n`
       + (workDir ? `The terminal opens in the project folder: ${workDir}\n` : 'The terminal opens in the project folder on the user\'s computer.\n')
       + `That folder IS the project root. Editor paths are relative to it (src/App.jsx = <root>/src/App.jsx). Commands run in the root already: never "cd" into a subfolder that is not listed below, never create a nested project folder (like my-app/), and never scaffold a new project inside the existing one.\n`
       + (dirTree.here.length ? `Folders inside ${workDir} ([has ...] marks a real project folder):\n${dirTree.here.map((l) => '  ' + l).join('\n')}\n` : '')
@@ -494,6 +507,14 @@ const [showLogin, setShowLogin] = useState(false)
       const rest = clean.filter((a) => !auto.includes(a))
       if (auto.length) setTimeout(() => auto.forEach((a) => runAiActionRef.current?.({ ...a, test: true })), 0)
       if (rest.length) setAiActions(rest)
+      return
+    }
+    // not asked to run anything: the commands become a copy-and-run suggestion in the chat, nothing runs or pops up
+    if (window.__qodersRunOk === false) {
+      const cmds = clean.filter((a) => a.type === 'run_command')
+      const keep = clean.filter((a) => a.type !== 'run_command')
+      if (cmds.length) setMessages((m) => joinAssistant(m, { role: 'assistant', text: `To run it, copy and paste this in the terminal:\n\`\`\`\n${cmds.map((a) => a.command).join('\n')}\n\`\`\``, time: Date.now() }))
+      if (keep.length) setAiActions(keep)
       return
     }
     if (clean.length) setAiActions(clean)

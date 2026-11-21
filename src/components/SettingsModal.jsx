@@ -42,6 +42,8 @@ function ByokSection() {
   const [models, setModels] = useState([])
   const [loading, setLoading] = useState(false)
   const [loadErr, setLoadErr] = useState('')
+  const [q, setQ] = useState('')
+  const [freeOnly, setFreeOnly] = useState(false)
   const prov = PROVIDERS.find((p) => p.id === v.provider) || PROVIDERS[0]
   const upd = (patch) => { setDone(false); setV((x) => ({ ...x, ...patch })) }
   const ready = v.key && v.model && (v.provider !== 'custom' || v.base)
@@ -58,7 +60,7 @@ function ByokSection() {
       if (!res.ok) throw new Error(d.error || 'Could not load models')
       setModels(d.models || [])
       if (!(d.models || []).length) setLoadErr('This key did not return any chat models. You can still type a model name.')
-      else if (!d.models.includes(v.model)) upd({ model: d.models[0] })
+      else if (!d.models.includes(v.model)) upd({ model: (d.models.find((m) => /:free$/.test(m)) || d.models[0]) })
     } catch (e) { if (!silent) setLoadErr(e.message); setModels([]) }
     finally { setLoading(false) }
   }
@@ -93,14 +95,31 @@ function ByokSection() {
         </div>
         <small>{loading ? 'Checking which models your key can use…' : models.length ? `${models.length} models available on your key` : 'Models load automatically once you paste your key.'}</small>
       </label>
-      <label className="byok-field"><span>Model</span>
+      <div className="byok-field"><span>Model</span>
         <div className="byok-keyrow">
-          <input list="byok-models" value={v.model} onChange={(e) => upd({ model: e.target.value })} placeholder={models.length ? 'Search or pick a model' : 'model name'} autoCapitalize="off" spellCheck="false" />
+          <input value={v.model} onChange={(e) => upd({ model: e.target.value })} placeholder="model name" autoCapitalize="off" spellCheck="false" />
           <button type="button" className="byok-eye" onClick={() => loadModels(false)} disabled={loading || !v.key}>{loading ? '…' : 'Reload'}</button>
         </div>
-        <datalist id="byok-models">{models.map((m) => <option key={m} value={m} />)}</datalist>
+        {models.length > 0 && (
+          <>
+            <div className="byok-keyrow" style={{ marginTop: 6 }}>
+              <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${models.length} models`} autoCapitalize="off" spellCheck="false" />
+              <button type="button" className="byok-eye" style={freeOnly ? { background: 'var(--accent)', color: '#fff' } : undefined} onClick={() => setFreeOnly((x) => !x)}>Free only</button>
+            </div>
+            <div className="byok-list">
+              {models
+                .filter((m) => (!freeOnly || /:free$/.test(m)) && m.toLowerCase().includes(q.trim().toLowerCase()))
+                .slice(0, 300)
+                .map((m) => (
+                  <button type="button" key={m} className={`byok-item ${m === v.model ? 'on' : ''}`} onClick={() => upd({ model: m })}>
+                    <span>{m}</span>{/:free$/.test(m) && <em>free</em>}
+                  </button>
+                ))}
+            </div>
+          </>
+        )}
         {loadErr && <small className="byok-err">{loadErr}</small>}
-      </label>
+      </div>
       <div className="byok-actions">
         <button type="button" className="byok-save" disabled={!ready} onClick={() => commit(true)}>{v.enabled ? 'Save changes' : 'Save and use my key'}</button>
         {v.enabled && <button type="button" className="byok-off" onClick={() => commit(false)}>Turn off</button>}

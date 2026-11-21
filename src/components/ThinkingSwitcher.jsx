@@ -49,14 +49,14 @@ export default function ThinkingSwitcher({ value, onChange, disabled, compact = 
                 <span className={`thinking-icon thinking-icon-${lvl.id}`}>◆</span>
                 <span className="thinking-item-label">{THINK_MIN[lvl.id] && !plan.canThink(lvl.id) ? '👑 ' : ''}{lvl.label}</span>
                 <span className={`thinking-cost thinking-cost-${lvl.badge}`}>
-                  {lvl.multiplier}×
+                  {lvl.multiplier} cr
                 </span>
               </div>
               <div className="thinking-item-hint">{lvl.hint}</div>
             </div>
           ))}
           <div className="thinking-menu-note">
-            Higher levels use more of your request budget per message.
+            Higher thinking uses more credits per message. It is open to every plan.
           </div>
         </div>
       )}
