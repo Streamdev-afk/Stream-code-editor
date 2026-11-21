@@ -1,6 +1,6 @@
 // What the AI knows about the editor itself, the user's accounts, and what just happened.
 // Kept in a small module so every request can read it without passing props around.
-const state = { terminal: [], console: [], github: null, aiName: '', userName: '', memory: '', progress: '' }
+const state = { terminal: [], console: [], github: null, aiName: '', userName: '', memory: '', progress: '', workspace: '' }
 export const setCtx = (key, value) => { state[key] = value }
 
 const GUIDE = `You are the AI inside ION Qoders, a code editor that runs in the browser and as a desktop app. You know how it works:
@@ -21,6 +21,7 @@ export function buildAppContext() {
   if (state.aiName) who.push(`The user named you "${state.aiName}". Answer to that name.`)
   if (state.github) who.push(state.github.connected ? `GitHub is connected as ${state.github.login || 'an account'}.` : 'GitHub is NOT connected yet (Settings > GitHub, then paste a token).')
   if (who.length) parts.push('## ACCOUNTS\n' + who.join('\n'))
+  if (state.workspace) parts.push(state.workspace)
   const term = tail(state.terminal, 40, 3500)
   const cons = tail(state.console, 25, 1800)
   if (term || cons) {
@@ -28,7 +29,7 @@ export function buildAppContext() {
     if (term) parts.push('Terminal:\n' + term)
     if (cons) parts.push('Preview console:\n' + cons)
   }
-  return parts.join('\n\n').slice(0, 7000)
+  return parts.join('\n\n').slice(0, 9000)
 }
 
 // Cheap parts only: used by prompts where the long guide would waste tokens

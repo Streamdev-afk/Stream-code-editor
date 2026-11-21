@@ -82,7 +82,7 @@
   border-radius: 50%;
   background: linear-gradient(135deg, #10b981, #22d3ee);
   box-shadow: 0 0 12px var(--accent-glow);
-  animation: logoPulse 3s ease-in-out infinite;
+  animation: logoPulse 6.6s ease-in-out infinite;
 }
 
 @keyframes logoPulse {
@@ -250,7 +250,7 @@
   50% { opacity: 0.3; }
 }
 .status-accent.pulse {
-  animation: pulse 1s ease-in-out infinite;
+  animation: pulse 2.2s ease-in-out infinite;
   color: var(--accent);
 }
 
@@ -1386,7 +1386,7 @@
   display: inline-block;
   width: 26px;
   height: 22px;
-  animation: typingOrbit 1.6s linear infinite;
+  animation: typingOrbit 3.52s linear infinite;
 }
 
 .typing-dot {
@@ -1398,7 +1398,7 @@
   margin: -2.5px 0 0 -2.5px;
   border-radius: 50%;
   background: var(--accent);
-  animation: typingFade 1.6s ease-in-out infinite;
+  animation: typingFade 3.52s ease-in-out infinite;
 }
 
 .typing-dot:nth-child(1) { transform: translateY(-8px); }
@@ -1415,7 +1415,7 @@
   margin: -2.5px 0 0 -2.5px;
   border-radius: 50%;
   background: var(--accent);
-  animation: typingCore 1.6s ease-in-out infinite;
+  animation: typingCore 3.52s ease-in-out infinite;
 }
 
 @keyframes typingOrbit { to { transform: rotate(360deg); } }
@@ -3793,7 +3793,7 @@
 .usage-btn.danger .usage-btn-dot {
   background: var(--danger);
   box-shadow: 0 0 6px var(--danger);
-  animation: pulse 1s ease-in-out infinite;
+  animation: pulse 2.2s ease-in-out infinite;
 }
 
 .usage-btn.loading {
@@ -3911,7 +3911,7 @@
 .usage-bar-fill.danger {
   background: linear-gradient(90deg, var(--danger), #ff6b61);
   box-shadow: 0 0 8px rgba(248, 81, 73, 0.5);
-  animation: pulse 1.4s ease-in-out infinite;
+  animation: pulse 3.08s ease-in-out infinite;
 }
 
 .usage-percent {
@@ -3995,7 +3995,7 @@
 .thinking-icon-ultra {
   color: #f0883e;
   text-shadow: 0 0 8px #f0883e88;
-  animation: thinkingPulse 2s ease-in-out infinite;
+  animation: thinkingPulse 4.4s ease-in-out infinite;
 }
 
 @keyframes thinkingPulse {
@@ -4381,7 +4381,7 @@
   height: 22px;
   font-size: 13px;
   color: var(--accent);
-  animation: spin 1.4s linear infinite;
+  animation: spin 3.08s linear infinite;
 }
 
 @keyframes spin {

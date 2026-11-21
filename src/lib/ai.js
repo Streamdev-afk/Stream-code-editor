@@ -13,6 +13,7 @@ import { API_BASE } from './api'
 import { apiFetch } from './supabase'
 import { loadActivePersona } from './team'
 import { createShell, runCommand, isReadOnlyCommand } from './shell'
+import { remapOps } from './ops'
 
 export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/edit`, {
@@ -238,13 +239,15 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
   }
 }
 
+const remapResult = (args, r) => { if (r && Array.isArray(r.operations)) r.operations = remapOps(args?.files, r.operations); return r }
+
 export async function streamAgent(args, onChunk, onStatus) {
   try {
-    return await runExplorable('/api/agent', args, onChunk, onStatus, 'Agent')
+    return remapResult(args, await runExplorable('/api/agent', args, onChunk, onStatus, 'Agent'))
   } catch (e) {
     if (!e.parseFail) throw e
     // an answer that could not be read: ask once more, shorter and stricter, before giving up
-    return runExplorable('/api/agent', { ...args, strict: true, thinking: 'low' }, onChunk, onStatus, 'Agent')
+    return remapResult(args, await runExplorable('/api/agent', { ...args, strict: true, thinking: 'low' }, onChunk, onStatus, 'Agent'))
   }
 }
 
@@ -272,7 +275,7 @@ export async function executeStep(args, onChunk, onStatus) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const a = attempt === 0 ? args : { ...args, strict: true, thinking: 'low' }
-      return await runExplorable('/api/agent/execute-step', a, onChunk, onStatus, 'Step')
+      return remapResult(args, await runExplorable('/api/agent/execute-step', a, onChunk, onStatus, 'Step'))
     } catch (e) {
       lastErr = e
       if (!e.parseFail) throw e
@@ -283,7 +286,7 @@ export async function executeStep(args, onChunk, onStatus) {
 
 // Helpers the chat panel uses to read the project the same way
 export const shouldExplore = (files) => projectChars(files) > SMALL_PROJECT_CHARS
-export { buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS }
+export { buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS, postStream }
 
 // Reads a reply that is a small JSON object plus <<<FILE path>>> ... <<<END>>> blocks (old replies with
 // content inside the JSON still work). A file block that was cut off is dropped and reported, never half-written.

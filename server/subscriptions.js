@@ -66,6 +66,27 @@ export async function getUserTier(userId) {
   }
 }
 
+// The plan bought in the ION app (table ion_subscriptions, same Supabase project). Cached for 30 seconds.
+const ionCache = new Map()
+export async function getIonPlan(userId) {
+  if (!userId || !supabaseAdmin) return null
+  const c = ionCache.get(userId)
+  if (c && c.expiresAt > Date.now()) return c.value
+  let value = null
+  try {
+    const { data } = await supabaseAdmin
+      .from('ion_subscriptions')
+      .select('plan, multiplier, status, current_period_end, cancelling')
+      .eq('user_id', userId)
+      .maybeSingle()
+    if (data && data.status === 'active' && (!data.current_period_end || new Date(data.current_period_end) > new Date())) {
+      value = { plan: data.plan, multiplier: Number(data.multiplier) || 1, periodEnd: data.current_period_end, renewing: !data.cancelling }
+    }
+  } catch (err) { console.warn('getIonPlan failed:', err.message) }
+  ionCache.set(userId, { value, expiresAt: Date.now() + 30 * 1000 })
+  return value
+}
+
 /**
  * Clear cached tier for a user (call after subscription changes).
  */

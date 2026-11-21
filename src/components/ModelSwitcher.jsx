@@ -2,9 +2,11 @@ import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { AVAILABLE_MODELS } from '../lib/settings'
 import { byokActive, getByok } from '../lib/byok'
+import { usePlan, PLAN_NAME } from '../lib/plan'
 
 export default function ModelSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
+  const plan = usePlan()
   const wrapRef = useRef(null)
   const [, bump] = useState(0)
   useEffect(() => {
@@ -45,12 +47,14 @@ export default function ModelSwitcher({ value, onChange, disabled, compact = fal
               key={m.id}
               className={`model-item ${m.id === value ? 'active' : ''}`}
               onClick={() => {
+                const lock = plan.modelLock(m.id)
+                if (lock) { window.dispatchEvent(new CustomEvent('qoders-toast', { detail: `${m.label} needs the ${PLAN_NAME[lock] || lock} plan. Buy it in the ION app (Plans page) with the same login.` })); return }
                 onChange(m.id)
                 setOpen(false)
               }}
             >
               <div className="model-item-head">
-                <span className="model-item-label">{m.label}</span>
+                <span className="model-item-label">{plan.modelLock(m.id) ? '👑 ' : ''}{m.label}</span>
                 {m.badge !== 'default' && (
                   <span className={`model-badge badge-${m.badge}`}>{m.badge}</span>
                 )}

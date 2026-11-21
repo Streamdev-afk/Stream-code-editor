@@ -73,7 +73,15 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
     } catch { return null }
   })()
   const desktopApp = typeof window !== 'undefined' && !!window.desktop?.termRun
+  // the "needs npm" box goes away once the project has been installed or started (by the button, the AI or the terminal)
+  const [npmHandled, setNpmHandled] = useState(false)
+  useEffect(() => {
+    const h = (e) => { if (/\b(npm|pnpm|yarn|bun)\b.*\b(install|i|run|start|dev|add)\b|\bvite\b/i.test(String(e.detail?.cmd || ''))) setNpmHandled(true) }
+    window.addEventListener('qoders-run', h)
+    return () => window.removeEventListener('qoders-run', h)
+  }, [])
   const runNpm = () => {
+    setNpmHandled(true)
     const pre = npmProject.dir ? `cd ${npmProject.dir} && ` : ''
     window.dispatchEvent(new CustomEvent('qoders-enqueue', { detail: { goal: 'Run the project', commands: [
       { command: `${pre}npm install`, test: true, message: 'Installs the packages this project needs' },
@@ -176,7 +184,7 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
         </div>
       </div>
 
-      {npmProject && mode !== 'local' && !localUrl && (
+      {npmProject && !npmHandled && mode !== 'local' && !localUrl && (
         <div className="npm-banner">
           <div><strong>This project needs npm.</strong> It cannot show here until its packages are installed and it is started, so you may only see a blank page.</div>
           {desktopApp

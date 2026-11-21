@@ -26,10 +26,13 @@ export default function BottomPanel({ open, onClose, consoleMessages, files, onF
     }
   }, [messages, activeTab])
 
-  if (!open) return null
+  // the terminal is created the first time the panel opens and then stays alive (hidden), so closing or switching tabs doesn't kill it
+  const [termOn, setTermOn] = useState(false)
+  useEffect(() => { if (open && activeTab === 'terminal') setTermOn(true) }, [open, activeTab])
+  if (!open && !termOn) return null
 
   return (
-    <div className="bottom-panel">
+    <div className="bottom-panel" style={open ? undefined : { display: 'none' }}>
       <div className="bottom-tabs">
         {TABS.map((tab) => {
           const badge = tab.id === 'output' && messages.length > 0
@@ -93,9 +96,7 @@ export default function BottomPanel({ open, onClose, consoleMessages, files, onF
               <div ref={outputEndRef} />
             </div>
           )
-        ) : activeTab === 'terminal' ? (
-  <Terminal files={files} onFilesChange={onFilesChange} projectId={projectId} />
-) : activeTab === 'problems' ? (
+        ) : activeTab === 'terminal' ? null : activeTab === 'problems' ? (
           <div className="bottom-placeholder">
             <div className="placeholder-icon">⚠</div>
             <div className="placeholder-title">No problems detected</div>
@@ -110,6 +111,11 @@ export default function BottomPanel({ open, onClose, consoleMessages, files, onF
             <div className="placeholder-hint">
               Debug output will appear here.
             </div>
+          </div>
+        )}
+        {termOn && (
+          <div style={{ display: activeTab === 'terminal' ? 'flex' : 'none', flex: 1, minHeight: 0, height: '100%', flexDirection: 'column' }}>
+            <Terminal files={files} onFilesChange={onFilesChange} projectId={projectId} />
           </div>
         )}
       </div>

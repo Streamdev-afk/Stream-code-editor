@@ -25,6 +25,7 @@ contextBridge.exposeInMainWorld('desktop', {
   termRun: (id, root, cwd, cmd) => ipcRenderer.invoke('term-run', { id, root, cwd, cmd }),
   termCd: (cwd, target) => ipcRenderer.invoke('term-cd', { cwd, target }),
   diskRead: (root) => ipcRenderer.invoke('disk-read', root),
+  diskTree: (opts) => ipcRenderer.invoke('disk-tree', opts),
   termDownload: (id, root, cwd, url, name) => ipcRenderer.invoke('term-download', { id, root, cwd, url, name }),
   termKill: (id) => ipcRenderer.invoke('term-kill', id),
   termScan: (root, since) => ipcRenderer.invoke('term-scan', { root, since }),

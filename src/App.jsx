@@ -14,6 +14,9 @@ import Preview from './components/Preview'
 import LanguageSelect from './components/LanguageSelect'
 import { streamEdit, streamAgent } from './lib/ai'
 import { resolveOp } from './lib/ops'
+import { stopAI } from './lib/supabase'
+import { usePlan } from './lib/plan'
+import { setCtx as setAiCtx } from './lib/appContext'
 import ProjectMenu from './components/ProjectMenu'
 import './App.css'
 import './modern.css'
@@ -175,6 +178,17 @@ function AppInner() {
     })
   }
 
+  // Follow-up notes from the AI join the previous assistant message instead of starting a new one
+  const joinAssistant = (m, msg) => {
+    const last = m[m.length - 1]
+    if (last && last.role === 'assistant' && !last._status && !last._ask && !last._askDone && !last.plan) {
+      const text = [last.text, msg.text].filter(Boolean).join('\n\n')
+      const activity = [...(last.activity || []), ...(msg.activity || [])]
+      return [...m.slice(0, -1), { ...last, text, ...(activity.length ? { activity } : {}), time: Date.now() }]
+    }
+    return [...m, msg]
+  }
+
   const setMessages = (updater) => {
     setSessionStore((s) => {
       const active = s.sessions.find((x) => x.id === s.activeSessionId)
@@ -186,18 +200,9 @@ function AppInner() {
   }
 
     // ---- Checkout ----
-  const handleUpgrade = async (tier) => {
-    if (!user) {
-      setShowLogin(true)
-      return
-    }
-    try {
-      showToast(`Starting ${tier.toUpperCase()} checkout…`, 'info')
-      const { authorizationUrl } = await startCheckout(tier)
-      redirectToCheckout(authorizationUrl)
-    } catch (err) {
-      showToast(`Checkout failed: ${err.message}`, 'error')
-    }
+  const handleUpgrade = async () => {
+    if (!user) { setShowLogin(true); return }
+    showToast('Plans are bought in the ION app (Plans page). Same login, and the editor updates by itself.', 'info')
   }
 
   const handleManageBilling = () => {
@@ -394,6 +399,7 @@ const [showLogin, setShowLogin] = useState(false)
   const fullRef = useRef(fullAccess)
   fullRef.current = fullAccess
   const fixRounds = useRef(0)
+  const sameErr = useRef({ sig: '', n: 0 })
   const [aiStreaming, setAiStreaming] = useState(false)
   const [editNote, setEditNote] = useState(null)
   const toggleFullAccess = (on) => {
@@ -408,6 +414,73 @@ const [showLogin, setShowLogin] = useState(false)
     window.addEventListener('qoders-ai-state', h)
     return () => window.removeEventListener('qoders-ai-state', h)
   }, [])
+  // ---- what the AI knows about where the project lives ----
+  const planInfo = usePlan()
+  useEffect(() => { if (fullAccess && planInfo.loaded && !planInfo.can('fullAccess')) toggleFullAccess(false) }, [planInfo.plan, planInfo.loaded, fullAccess])
+  useEffect(() => {
+    const h = (e) => showToast(String(e.detail || ''), 'info')
+    window.addEventListener('qoders-toast', h)
+    return () => window.removeEventListener('qoders-toast', h)
+  })
+  const [workDir, setWorkDir] = useState(() => window.__qodersProjectDir || '')
+  useEffect(() => {
+    const h = (e) => setWorkDir(e.detail || '')
+    window.addEventListener('qoders-workdir', h)
+    return () => window.removeEventListener('qoders-workdir', h)
+  }, [])
+  // folders around the terminal (desktop only), so the AI can find the real project folder
+  const [dirTree, setDirTree] = useState({ here: [], up: [], parent: '' })
+  useEffect(() => {
+    if (!workDir || !window.desktop?.diskTree) return undefined
+    let off = false
+    const t = setTimeout(async () => {
+      try {
+        const here = await window.desktop.diskTree({ root: workDir, depth: 3, max: 100 })
+        const up = here?.parent ? await window.desktop.diskTree({ root: here.parent, depth: 2, max: 100 }) : null
+        if (!off) setDirTree({ here: here?.lines || [], up: up?.lines || [], parent: here?.parent || '' })
+      } catch { /* the listing is only a help */ }
+    }, 800)
+    return () => { off = true; clearTimeout(t) }
+  }, [workDir, Object.keys(files || {}).length])
+  const doneCmds = useRef([]) // commands that already finished fine: { cmd, pkg }
+  const pkgSig = () => String(files['package.json']?.content || '').length + ':' + String(files['package.json']?.content || '').slice(0, 400)
+  useEffect(() => {
+    const paths = Object.keys(files || {})
+    const tops = new Map()
+    for (const p of paths) {
+      const i = p.indexOf('/')
+      const k = i === -1 ? p : p.slice(0, i + 1)
+      tops.set(k, (tops.get(k) || 0) + 1)
+    }
+    const tree = [...tops.entries()].sort(([a], [b]) => a.localeCompare(b)).slice(0, 60).map(([k, n]) => (k.endsWith('/') ? `  ${k} (${n} files)` : `  ${k}`)).join('\n')
+    const sample = paths.slice(0, 80).map((p) => `  ${p}`).join('\n')
+    setAiCtx('workspace', `## WORKSPACE (where everything lives, read before any command)\n`
+      + (workDir ? `The terminal opens in the project folder: ${workDir}\n` : 'The terminal opens in the project folder on the user\'s computer.\n')
+      + `That folder IS the project root. Editor paths are relative to it (src/App.jsx = <root>/src/App.jsx). Commands run in the root already: never "cd" into a subfolder that is not listed below, never create a nested project folder (like my-app/), and never scaffold a new project inside the existing one.\n`
+      + (dirTree.here.length ? `Folders inside ${workDir} ([has ...] marks a real project folder):\n${dirTree.here.map((l) => '  ' + l).join('\n')}\n` : '')
+      + (dirTree.up.length ? `Folders next to it, inside ${dirTree.parent}:\n${dirTree.up.map((l) => '  ' + l).join('\n')}\nIf the real project (the one with package.json etc.) is in one of these folders and not the terminal folder, start commands with cd to that exact path (e.g. cd "<folder>"), taken from this list, never guessed. If it is not listed, run a dir/ls command to look, then use the path you see.\n` : '')
+      + `Top level of the project:\n${tree || '  (empty)'}\nAll files (first ${Math.min(paths.length, 80)}):\n${sample}`
+      + (doneCmds.current.length ? `\nAlready finished successfully (do NOT run again unless the files they depend on changed): ${doneCmds.current.map((c) => c.cmd).join(' | ')}` : ''))
+  }, [files, workDir, aiStreaming, dirTree])
+  // the stop button: stop the AI, the command queue, the fix loop, and turn Full access off
+  const [cmdActive, setCmdActive] = useState(false)
+  const stopEverything = () => {
+    stopAI()
+    cmdQueue.current = []; cmdBusy.current = false; cmdResults.current = []
+    fixRounds.current = 0
+    sameErr.current = { sig: '', n: 0 }
+    setPendingAi(null)
+    setCmdActive(false)
+    if (fullRef.current) toggleFullAccess(false)
+    window.dispatchEvent(new CustomEvent('qoders-stop'))
+    setMessages((m) => joinAssistant(m, { role: 'assistant', text: 'Stopped. Nothing else will run until you ask. Full access is off.', time: Date.now() }))
+  }
+  useEffect(() => {
+    const h = () => stopEverything()
+    window.addEventListener('qoders-stop-all', h)
+    return () => window.removeEventListener('qoders-stop-all', h)
+  })
+  useEffect(() => { window.dispatchEvent(new CustomEvent('qoders-cmd-state', { detail: { busy: cmdActive } })) }, [cmdActive])
   const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests', 'run_command']
   const queueAiActions = (list) => {
     const clean = (Array.isArray(list) ? list : [])
@@ -455,7 +528,8 @@ const [showLogin, setShowLogin] = useState(false)
   })
   const startNextCommand = () => {
     const next = cmdQueue.current.shift()
-    if (!next) { finishCommands(); return }
+    if (!next) { setCmdActive(false); finishCommands(); return }
+    setCmdActive(true)
     cmdBusy.current = true
     cmdAnyTest.current = cmdAnyTest.current || !!next.test
     addActivity([{ kind: 'terminal', title: `Running on your computer: ${next.command}`, detail: next.message || '' }])
@@ -467,7 +541,12 @@ const [showLogin, setShowLogin] = useState(false)
   const enqueueCommands = (list) => {
     if (!list.length) return
     if (!cmdBusy.current && !cmdQueue.current.length) { cmdResults.current = []; cmdAnyTest.current = false }
-    cmdQueue.current.push(...list)
+    // an install that already worked, with the same package.json, is not run again
+    const sig = pkgSig()
+    const fresh = list.filter((c) => !(/\b(install|add|ci)\b/i.test(c.command) && doneCmds.current.some((d) => d.cmd === c.command && d.pkg === sig)))
+    if (fresh.length < list.length) addActivity([{ kind: 'check', title: 'Skipped a command that already finished', detail: list.filter((c) => !fresh.includes(c)).map((c) => c.command).join('\n') }])
+    if (!fresh.length) { finishCommands(); return }
+    cmdQueue.current.push(...fresh)
     if (!cmdBusy.current) startNextCommand()
   }
   const finishCommands = async () => {
@@ -492,7 +571,7 @@ const [showLogin, setShowLogin] = useState(false)
       text += `\n\n**Preview check:** ${test ? (test.status === 'ok' ? `I opened ${window.__qodersLocalUrl ? 'your dev server page' : 'the preview'} and found no errors${fixes ? `, after fixing ${fixes} problem${fixes === 1 ? '' : 's'} on the way` : ''}.` : `I opened the preview and some errors are still there: ${test.summary || 'see the console'}. Tell me and I will keep fixing.`) : 'I could not read the preview this time.'}`
     }
     if (fullRef.current) text += '\n\n**Full access:** I installed, ran and re-checked everything. I cannot see how the page looks, so if something is off visually, tell me what and I will fix it.'
-    setMessages((m) => [...m, { role: 'assistant', text, time: Date.now() }])
+    setMessages((m) => joinAssistant(m, { role: 'assistant', text, time: Date.now() }))
   }
   const stopCommands = (reason) => { cmdQueue.current = []; cmdBusy.current = false; cmdResults.current = []; void reason }
 
@@ -505,25 +584,36 @@ const [showLogin, setShowLogin] = useState(false)
         const done = cmdResults.current.map((r) => r.cmd)
         stopCommands()
         if (!d.test) {
-          setMessages((m) => [...m, { role: 'assistant', text: `\`${d.cmd}\` ${d.running ? 'printed errors' : `failed (exit code ${d.code})`}.${done.length ? ` Before that this worked: ${done.map((c) => `\`${c}\``).join(', ')}.` : ''} I stopped the rest. Check the terminal, or tell me to fix it.`, time: Date.now() }])
+          setMessages((m) => joinAssistant(m, { role: 'assistant', text: `\`${d.cmd}\` ${d.running ? 'printed errors' : `failed (exit code ${d.code})`}.${done.length ? ` Before that this worked: ${done.map((c) => `\`${c}\``).join(', ')}.` : ''} I stopped the rest. Check the terminal, or tell me to fix it.`, time: Date.now() }))
+          return
+        }
+        // the same error twice in a row means the last fix did not help: stop and ask instead of breaking more files
+        const sig = `${d.cmd}|${String(d.output || '').slice(-300)}`
+        sameErr.current = sameErr.current.sig === sig ? { sig, n: sameErr.current.n + 1 } : { sig, n: 0 }
+        if (sameErr.current.n >= 1) {
+          sameErr.current = { sig: '', n: 0 }; fixRounds.current = 0
+          setCmdActive(false)
+          setMessages((m) => joinAssistant(m, { role: 'assistant', text: `\`${d.cmd}\` gives the same error after my fix, so I stopped instead of changing more files. Tell me what you see in the terminal or what you want me to try, and I will carry on from there.`, time: Date.now() }))
           return
         }
         if (fullRef.current) {
           fixRounds.current += 1
           if (fixRounds.current > 8) {
             fixRounds.current = 0
-            setMessages((m) => [...m, { role: 'assistant', text: `I tried to fix \`${d.cmd}\` 8 times and it still fails, so I stopped to save your tokens. Look at the terminal, tell me what you see, and I will carry on.`, time: Date.now() }])
+            setMessages((m) => joinAssistant(m, { role: 'assistant', text: `I tried to fix \`${d.cmd}\` 8 times and it still fails, so I stopped to save your tokens. Look at the terminal, tell me what you see, and I will carry on.`, time: Date.now() }))
             return
           }
         }
         setPendingAi({
-          prompt: `I ran \`${d.cmd}\` in the terminal and it ${d.running ? 'printed errors' : `failed with exit code ${d.code}`}.${done.length ? ` These worked before it: ${done.join(', ')}.` : ''}\n\nTerminal output (end):\n${d.output}\n\nFind the real cause and fix it in the project files. If a package or command is missing, say so.${fullRef.current ? ` Then add a run_command action to run \`${d.cmd}\` again.` : ''}`,
-          shown: `\`${d.cmd}\` had problems, please fix them`,
+          prompt: `I ran \`${d.cmd}\` in the terminal and it ${d.running ? 'printed errors' : `failed with exit code ${d.code}`}.${done.length ? ` These worked before it: ${done.join(', ')}.` : ''}\n\nTerminal output (end):\n${d.output}\n\nDo not just retry. First work out what the error actually means and the root cause (read the real paths, the file list and the end of the output), say it in two short sentences, then make the smallest fix, touching only files involved. The project root is the terminal folder: only cd to a folder shown in the WORKSPACE listing and do not create nested project folders. Never re-run commands that already succeeded. If a package or command is missing, say so.${fullRef.current ? ` Then add a run_command action to run \`${d.cmd}\` again.` : ''}`,
+          shown: null,
         })
         setMobileView('ai')
         return
       }
       cmdResults.current.push({ cmd: d.cmd, running: !!d.running })
+      if (!d.running && !d.test) { doneCmds.current = [...doneCmds.current.filter((x) => x.cmd !== d.cmd), { cmd: d.cmd, pkg: pkgSig() }].slice(-12) }
+      sameErr.current = { sig: '', n: 0 }
       startNextCommand()
     }
     window.addEventListener('qoders-run-done', h)
@@ -753,7 +843,7 @@ const [showLogin, setShowLogin] = useState(false)
     // if the explanation could not be written, still say honestly what failed, in the same message
     if (failures.length && !why) why = `${changes.length ? 'Most of it is done, ' : ''}but I could not finish: ${failures.map((f) => f.title).join(', ')}. Do you want me to fix ${failures.length === 1 ? 'it' : 'them'}? Just reply "fix it".`
     // The explanation shows in chat; the detailed list of what was done sits in a collapsed line under it
-    setMessages((m) => [...m, { role: 'assistant', text: why, activity, time: Date.now() }])
+    setMessages((m) => joinAssistant(m, { role: 'assistant', text: why, activity, time: Date.now() }))
   }
 
   // "fix it": run again only the steps that failed last time
@@ -765,7 +855,7 @@ const [showLogin, setShowLogin] = useState(false)
   }
 
   // A collapsed "what I did" line in the chat (no message text)
-  const addActivity = (items) => setMessages((m) => [...m, { role: 'assistant', text: '', activity: items, time: Date.now() }])
+  const addActivity = (items) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: '', activity: items, time: Date.now() }))
   useEffect(() => { setAskQuestions(settings.askQuestions !== false) }, [settings.askQuestions])
   // project rules file: ION.md, AGENTS.md or .ionrules at the project root
   const rulesPath = ['ION.md', 'AGENTS.md', '.ionrules'].find((n) => files[n])

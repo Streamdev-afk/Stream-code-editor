@@ -12,7 +12,7 @@ const usage = new Map()
 
 import { randomBytes } from 'crypto'
 import { createClient } from '@supabase/supabase-js'
-import { getUserTier as getUserTierFromDB } from './subscriptions.js'
+import { getUserTier as getUserTierFromDB, getIonPlan } from './subscriptions.js'
 
 const SB_URL = process.env.SUPABASE_URL
 const SB_SECRET = process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -35,6 +35,15 @@ export const TIER_LIMITS = {
     short: 50,
     long: 500,
   },
+  // ION plans (the editor follows the plan bought in the ION app)
+  go: { label: 'Go', short: 150, long: 1500 },
+  plus: { label: 'Plus', short: 400, long: 4000 },
+  pro: { label: 'Pro', short: 1000, long: 10000 },
+  max: { label: 'Max', short: 2500, long: 25000 },
+  max2: { label: 'Max 2x', short: 5000, long: 50000 },
+  max3: { label: 'Max 3x', short: 7500, long: 75000 },
+  max5: { label: 'Max 5x', short: 12500, long: 125000 },
+  // old editor-only plans, kept so nobody loses what they already paid for
   pro3x: {
     label: 'Pro 3×',
     short: 150,
@@ -78,7 +87,7 @@ function getUserKey(req) {
 const tierCache = new Map() // userId -> { tier, expiresAt }
 const TIER_CACHE_TTL = 30 * 1000 // 30 seconds
 
-async function resolveTier(req) {
+export async function resolveTier(req) {
   if (!req.isAuth) return 'anonymous'
 
   // Dev override for testing
@@ -92,7 +101,10 @@ async function resolveTier(req) {
   if (cached && cached.expiresAt > Date.now()) return cached.tier
 
   try {
-    const tier = await getUserTierFromDB(userId)
+    // the plan bought in the ION app decides first
+    const ion = await getIonPlan(userId)
+    let tier = ion ? (ion.plan === 'max' && ion.multiplier > 1 ? `max${Math.min(ion.multiplier, 5)}` : ion.plan) : null
+    if (!tier || tier === 'free' || !TIER_LIMITS[tier]) tier = await getUserTierFromDB(userId)
     const normalized = TIER_LIMITS[tier] ? tier : 'free'
     tierCache.set(userId, { tier: normalized, expiresAt: Date.now() + TIER_CACHE_TTL })
     return normalized

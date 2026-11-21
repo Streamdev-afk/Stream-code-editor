@@ -1,9 +1,11 @@
 import Icon from './Icon'
 import { useState, useRef, useEffect } from 'react'
 import { THINKING_LEVELS } from '../lib/settings'
+import { usePlan, PLAN_NAME, THINK_MIN } from '../lib/plan'
 
 export default function ThinkingSwitcher({ value, onChange, disabled, compact = false, up = false }) {
   const [open, setOpen] = useState(false)
+  const plan = usePlan()
   const wrapRef = useRef(null)
 
   const current = THINKING_LEVELS.find((l) => l.id === value) || THINKING_LEVELS[1]
@@ -38,13 +40,14 @@ export default function ThinkingSwitcher({ value, onChange, disabled, compact = 
               key={lvl.id}
               className={`thinking-item ${lvl.id === value ? 'active' : ''}`}
               onClick={() => {
+                if (THINK_MIN[lvl.id] && !plan.canThink(lvl.id)) { window.dispatchEvent(new CustomEvent('qoders-toast', { detail: `${lvl.label} thinking needs the ${PLAN_NAME[THINK_MIN[lvl.id]]} plan. Buy it in the ION app (Plans page) with the same login.` })); return }
                 onChange(lvl.id)
                 setOpen(false)
               }}
             >
               <div className="thinking-item-head">
                 <span className={`thinking-icon thinking-icon-${lvl.id}`}>◆</span>
-                <span className="thinking-item-label">{lvl.label}</span>
+                <span className="thinking-item-label">{THINK_MIN[lvl.id] && !plan.canThink(lvl.id) ? '👑 ' : ''}{lvl.label}</span>
                 <span className={`thinking-cost thinking-cost-${lvl.badge}`}>
                   {lvl.multiplier}×
                 </span>

@@ -132,6 +132,8 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
       noteLayout(projectId, filesRef.current, window.__qodersTitle)
       await saveAllToDisk(projectId, filesRef.current).catch(() => {}) // the project folder gets the newest editor files
       const dir = (await projectFolderPath(projectId)) || folder.path
+      window.__qodersProjectDir = dir
+      window.dispatchEvent(new CustomEvent('qoders-workdir', { detail: dir }))
       const r = await window.desktop.ptyOpen(id, dir, term.cols, term.rows)
       if (disposed) return
       if (!r.ok) { setError(r.error || 'The terminal could not start.'); return }
@@ -186,7 +188,10 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
     if (pendingRun) { window.__qodersPendingRun = null; go(pendingRun) }
     const h = (e) => go(e.detail)
     window.addEventListener('qoders-run', h)
-    return () => window.removeEventListener('qoders-run', h)
+    // the stop button: Ctrl+C in the shell
+    const stopH = () => { try { window.desktop.ptyWrite(id, '\x03') } catch { /* ignore */ } }
+    window.addEventListener('qoders-stop', stopH)
+    return () => { window.removeEventListener('qoders-run', h); window.removeEventListener('qoders-stop', stopH) }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId])
 

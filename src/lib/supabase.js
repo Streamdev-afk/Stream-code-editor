@@ -32,7 +32,20 @@ export async function getAccessToken() {
 /**
  * Fetch helper — automatically attaches the Supabase JWT if the user is signed in.
  */
+// The stop button aborts every AI request that is running
+let stopCtl = new AbortController()
+export function stopAI() { try { stopCtl.abort() } catch { /* ignore */ } stopCtl = new AbortController(); window.__qodersStopped = Date.now() }
+
 export async function apiFetch(url, options = {}) {
+  if (/\/api\/(chat|edit|agent)/.test(String(url))) {
+    const own = options.signal
+    const ctl = new AbortController()
+    const kill = () => ctl.abort()
+    if (own) { if (own.aborted) kill(); else own.addEventListener('abort', kill) }
+    const g = stopCtl.signal
+    if (g.aborted) kill(); else g.addEventListener('abort', kill)
+    options = { ...options, signal: ctl.signal }
+  }
   const token = await getAccessToken()
   const headers = {
     'Content-Type': 'application/json',
@@ -46,7 +59,7 @@ export async function apiFetch(url, options = {}) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   let lastErr
   for (let attempt = 0; attempt < 3; attempt++) {
-    if (options.signal?.aborted) break
+    if (options.signal?.aborted) throw Object.assign(new Error('Stopped'), { name: 'AbortError' })
     try {
       const res = await fetch(url, { ...options, headers })
       if ([502, 503, 504].includes(res.status) && attempt < 2) {

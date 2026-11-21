@@ -7,6 +7,8 @@ import path from 'path'
 import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
 import { byokMiddleware, getByok, byokCreate, byokError, readByok, listModels } from './byok.js'
+import { getIonPlan } from './subscriptions.js'
+import { planGate } from './gate.js'
 import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
 // Using your own key never counts against plan limits
 const checkLimit = async (req, c) => (req.byok ? { allowed: true } : _checkLimit(req, c))
@@ -79,6 +81,7 @@ app.use((req, res, next) => {
 
 app.use(attachUser)
 app.use(byokMiddleware)
+app.use(planGate)
 
 // Lists the models a user's own API key can use (so they pick instead of typing)
 app.post('/api/byok/models', async (req, res) => {
@@ -1375,36 +1378,16 @@ const PLAN_CODES = {
   pro10x: process.env.PAYSTACK_PLAN_PRO10X || '',
 }
 
-app.post('/api/paystack/checkout', async (req, res) => {
-  if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
-  if (!paystackConfigured()) return res.status(503).json({ error: 'Payments not configured' })
-  const { tier } = req.body
-  if (!PLAN_CODES[tier]) return res.status(400).json({ error: `Unknown tier: ${tier}` })
-  const email = req.user.email
-  if (!email) return res.status(400).json({ error: 'No email on account' })
-  try {
-    const AMOUNTS = { pro3x: 300000, pro5x: 500000, pro10x: 900000 }
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173'
-    const { authorizationUrl, reference } = await initializeTransaction({
-      email,
-      amount: AMOUNTS[tier] || 1000,
-      plan: PLAN_CODES[tier],
-      callbackUrl: `${frontendUrl}/?payment=success`,
-      metadata: { userId: req.user.id, tier },
-    })
-    res.json({ authorizationUrl, reference, tier })
-  } catch (err) {
-    console.error('Paystack checkout error:', err)
-    res.status(500).json({ error: friendlyError(err) })
-  }
-})
+// Plans are bought in the ION app (live payments there). The editor just follows that plan.
+app.post('/api/paystack/checkout', (req, res) => res.status(410).json({ error: 'Plans are bought in the ION app (Plans page). Use the same login and your editor plan updates by itself.' }))
 
 app.get('/api/subscription', async (req, res) => {
   if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
-  if (!subsConfigured()) return res.json({ subscription: null, note: 'Subscriptions not configured' })
   try {
-    const sub = await getSubscription(req.user.id)
-    res.json({ subscription: sub })
+    const ion = await getIonPlan(req.user.id)
+    if (ion) return res.json({ subscription: { tier: ion.plan, multiplier: ion.multiplier, status: ion.renewing ? 'active' : 'ending', current_period_end: ion.periodEnd, source: 'ion' } })
+    if (!subsConfigured()) return res.json({ subscription: null })
+    res.json({ subscription: await getSubscription(req.user.id) })
   } catch (err) {
     console.error('Get subscription error:', err)
     res.status(500).json({ error: friendlyError(err) })
@@ -1413,6 +1396,7 @@ app.get('/api/subscription', async (req, res) => {
 
 app.post('/api/subscription/cancel', async (req, res) => {
   if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
+  if (await getIonPlan(req.user.id)) return res.status(409).json({ error: 'Your plan is managed in the ION app. Open ION, then Plans, to cancel or change it.' })
   if (!subsConfigured()) return res.status(503).json({ error: 'Subscriptions not configured' })
   try {
     const sub = await getSubscription(req.user.id)

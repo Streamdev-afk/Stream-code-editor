@@ -4,6 +4,10 @@ import { getSubscription, cancelSubscription } from '../lib/paystack'
 
 const TIER_LABELS = {
   free: 'Free',
+  go: 'Go',
+  plus: 'Plus',
+  pro: 'Pro',
+  max: 'Max',
   pro3x: 'Pro 3×',
   pro5x: 'Pro 5×',
   pro10x: 'Pro 10×',
@@ -87,38 +91,12 @@ export default function BillingPanel({ onUpgrade }) {
 
       {error && <div className="billing-error">⚠️ {error}</div>}
 
-      {!isPro && (
-        <div className="billing-upgrade">
-          <div className="billing-upgrade-title">Upgrade your plan</div>
-          <div className="billing-upgrade-grid">
-            <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro3x')}>
-              <div className="billing-upgrade-name">Pro 3×</div>
-              <div className="billing-upgrade-limits">150 / day · 1500 / 2wks</div>
-              <div className="billing-upgrade-price">₦3,000/mo</div>
-            </button>
-            <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro5x')}>
-              <div className="billing-upgrade-name">Pro 5×</div>
-              <div className="billing-upgrade-limits">250 / day · 2500 / 2wks</div>
-              <div className="billing-upgrade-price">₦5,000/mo</div>
-            </button>
-            <button className="billing-upgrade-card" onClick={() => onUpgrade?.('pro10x')}>
-              <div className="billing-upgrade-name">Pro 10×</div>
-              <div className="billing-upgrade-limits">500 / day · 5000 / 2wks</div>
-              <div className="billing-upgrade-price">₦9,000/mo</div>
-            </button>
-          </div>
+      <div className="billing-upgrade">
+        <div className="billing-upgrade-title">{isPro ? 'Your plan comes from your ION account' : 'Upgrade your plan'}</div>
+        <div className="billing-upgrade-limits">
+          Plans are bought, changed and cancelled in the ION app (Plans page) with this same login. Your editor plan updates by itself{tier === 'max' || tier === 'pro' ? ' and you already have the frontier models.' : ': Go adds more models, Plus better models, Pro and Max frontier models.'}
         </div>
-      )}
-
-      {isPro && status === 'active' && (
-        <button
-          className="billing-cancel"
-          onClick={handleCancel}
-          disabled={cancelling}
-        >
-          {cancelling ? 'Cancelling…' : 'Cancel subscription'}
-        </button>
-      )}
+      </div>
     </div>
   )
 }

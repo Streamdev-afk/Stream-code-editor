@@ -261,6 +261,29 @@ async function scanFolder(root, since, limit) {
 }
 // files a command made or changed (small numbers only: a big pile is not the user's project)
 ipcMain.handle('term-scan', (_e, { root, since }) => scanFolder(root, since, 25))
+// a read-only look at folders (names only), so the AI can find where the real project is
+ipcMain.handle('disk-tree', (_e, { root, depth = 2, max = 120 }) => {
+  const SKIP = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.dart_tool', '__pycache__', '.venv', 'venv', 'release', '.cache'])
+  const MARK = ['package.json', 'pubspec.yaml', 'requirements.txt', 'pyproject.toml', 'Cargo.toml', 'go.mod', 'index.html', 'pom.xml']
+  const out = []
+  const walk = (dir, rel, d) => {
+    if (out.length >= max) return
+    let list = []
+    try { list = fs.readdirSync(dir, { withFileTypes: true }) } catch { return }
+    const marks = list.filter((x) => x.isFile() && MARK.includes(x.name)).map((x) => x.name)
+    if (rel) out.push(`${rel}/${marks.length ? '   [has ' + marks.join(', ') + ']' : ''}`)
+    if (d <= 0) return
+    for (const x of list.slice(0, 80)) {
+      if (x.isDirectory() && !SKIP.has(x.name) && !x.name.startsWith('.')) walk(path.join(dir, x.name), rel ? rel + '/' + x.name : x.name, d - 1)
+    }
+  }
+  try {
+    const r = path.resolve(String(root || ''))
+    if (!fs.existsSync(r)) return { ok: false, lines: [] }
+    walk(r, '', Math.min(3, depth))
+    return { ok: true, lines: out, root: r, parent: path.dirname(r) }
+  } catch { return { ok: false, lines: [] } }
+})
 // open an existing folder's project files in the editor
 ipcMain.handle('disk-read', (_e, root) => scanFolder(root, 0, 300))
 

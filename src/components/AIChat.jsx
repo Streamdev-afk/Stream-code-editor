@@ -14,6 +14,8 @@ import { API_BASE } from '../lib/api'
 import { apiFetch } from '../lib/supabase'
 import { fileToDataUrl } from '../lib/image'
 import { createShell } from '../lib/shell'
+import { usePlan, FEATURE_MIN, PLAN_NAME } from '../lib/plan'
+import { crewResearch, crewAnalyze, crewPrompt } from '../lib/crew'
 import { isCreationOnly, shouldExplore, buildIndex, runForAI, trimObservations, MAX_SHELL_ROUNDS } from '../lib/ai'
 import ModelSwitcher from './ModelSwitcher'
 import ThinkingSwitcher from './ThinkingSwitcher'
@@ -76,6 +78,10 @@ export default function AIChat({
   const [showSearch, setShowSearch] = useState(false)
   const [sessionQuery, setSessionQuery] = useState('')
   const [mode, setMode] = useState('chat')
+  const plan = usePlan()
+  const lockedMsg = (name, f) => window.dispatchEvent(new CustomEvent('qoders-toast', { detail: `${name} needs the ${PLAN_NAME[FEATURE_MIN[f]]} plan. Buy it in the ION app (Plans page) with the same login.` }))
+  const [crewOn, setCrewOn] = useState(() => { try { return localStorage.getItem('qoders-crew') === '1' } catch { return false } })
+  const toggleCrew = (v) => { setCrewOn(v); try { localStorage.setItem('qoders-crew', v ? '1' : '0') } catch { /* ignore */ } }
   const [offer, setOffer] = useState(null) // { text } - "switch to agent mode?" pop-up
   const [ask, setAsk] = useState(null) // question the AI wants answered: { question, options, multi, mode, original }
   const [showTeam, setShowTeam] = useState(false)
@@ -135,6 +141,16 @@ export default function AIChat({
     try { r.start() } catch { setListening(false) }
   }
   const [streaming, setStreaming] = useState(false)
+  const sendAgentRef = useRef(null)
+  const [crewDone, setCrewDone] = useState([])
+  const [cmdBusyUi, setCmdBusyUi] = useState(false)
+  useEffect(() => {
+    const h = (e) => setCmdBusyUi(!!e.detail?.busy)
+    window.addEventListener('qoders-cmd-state', h)
+    const st = () => { setStreaming(false) }
+    window.addEventListener('qoders-stop', st)
+    return () => { window.removeEventListener('qoders-cmd-state', h); window.removeEventListener('qoders-stop', st) }
+  }, [])
   useEffect(() => { window.dispatchEvent(new CustomEvent('qoders-ai-state', { detail: { streaming } })) }, [streaming])
   const messagesEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -305,17 +321,47 @@ useEffect(() => {
         break
       }
     } catch (err) {
-      const msg = err.name === 'AbortError'
+      const stopped = err.name === 'AbortError' && Date.now() - (window.__qodersStopped || 0) < 8000
+      const msg = stopped ? 'Stopped.' : err.name === 'AbortError'
         ? 'Request timed out after 60s. Try a shorter question.'
         : err.message
-      setLast(`⚠️ ${msg}`)
+      setLast(stopped ? msg : `⚠️ ${msg}`)
     } finally {
       setStreaming(false)
       inputRef.current?.focus()
     }
   }
 
-  const sendAgent = async (text, imgs = [], shown) => {
+  // Agent crew: Researcher -> Analyst -> you confirm -> Planner + Builder (+ test loop as Reviewer)
+  const runCrew = async (text) => {
+    const setLast = (t) => setMessages((m) => { const c = [...m]; c[c.length - 1] = { role: 'assistant', text: t, time: Date.now(), _status: true }; return c })
+    setMessages([...messages, { role: 'user', text, time: Date.now() }, { role: 'assistant', text: 'Researcher: starting…', time: Date.now(), _status: true }])
+    setStreaming(true)
+    try {
+      const { notes, sources } = await crewResearch({ prompt: text, model, behavior, onStatus: setLast })
+      const spec = await crewAnalyze({ prompt: text, notes, files, activeFile, model, behavior, onStatus: setLast })
+      const links = sources.slice(0, 4).map((s) => `- [${s.title || s.url}](${s.url})`).join('\n')
+      setMessages((m) => {
+        const c = [...m]
+        c[c.length - 1] = {
+          role: 'assistant', time: Date.now(), _crew: { prompt: text, spec, notes, done: false },
+          text: `**Researcher notes**\n${notes}${links ? `\n\n**Sources**\n${links}` : ''}\n\n**Analyst: what I will build (please confirm)**\n${spec}`,
+        }
+        return c
+      })
+    } catch (err) {
+      const stopped = err.name === 'AbortError'
+      setLast(stopped ? 'Stopped.' : `The crew could not finish: ${err.message}. You can turn Agent crew off in the ⋯ menu and ask again.`)
+    } finally {
+      setStreaming(false)
+    }
+  }
+  const confirmCrew = (idx, msg) => {
+    setCrewDone((d) => [...d, msg.time])
+    sendAgentRef.current?.(crewPrompt(msg._crew.prompt, msg._crew.spec, msg._crew.notes), [], null, true)
+  }
+
+  const sendAgent = async (text, imgs = [], shown, noCrew) => {
     const cmds = [] // terminal commands the AI ran to read your code this turn
     const acts = (extra = []) => [...cmds.map((c) => ({ kind: 'terminal', title: 'Read your code in the terminal', detail: c })), ...extra]
     // shows which terminal command the AI is running to read your code
@@ -329,7 +375,7 @@ useEffect(() => {
     }
     setMessages([
       ...messages,
-      { role: 'user', text: shown ?? text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) },
+      ...(shown === null ? [] : [{ role: 'user', text: shown ?? text, time: Date.now(), ...(imgs.length ? { imageCount: imgs.length } : {}) }]),
       { role: 'assistant', text: 'Analyzing project…', time: Date.now(), _status: true },
     ])
     setStreaming(true)
@@ -485,6 +531,7 @@ setMessages((m) => {
     else sendChat(answer, [])
   }
 
+  sendAgentRef.current = sendAgent
   const send = () => {
     if ((!input.trim() && images.length === 0) || streaming) return
     const imgs = images
@@ -510,7 +557,8 @@ setMessages((m) => {
       setOffer({ text })
       return
     }
-    if (mode === 'agent') sendAgent(text, imgs)
+    if (mode === 'agent' && crewOn && plan.can('crew') && !imgs.length && text.length > 25 && !RUN_INTENT.test(text)) runCrew(text)
+    else if (mode === 'agent') sendAgent(text, imgs)
     else sendChat(text, imgs)
   }
 
@@ -570,13 +618,19 @@ setMessages((m) => {
                       )}
                       {mode === 'agent' && (
                         <label className="more-row">
-                          <span>Team ({getTeamMembers().length} AIs)</span>
-                          <input type="checkbox" checked={!!team} onChange={(e) => onTeamToggle?.(e.target.checked)} />
+                          <span>{plan.can('team') ? '' : '👑 '}Team ({getTeamMembers().length} AIs)</span>
+                          <input type="checkbox" checked={!!team && plan.can('team')} onChange={(e) => { if (!plan.can('team')) return lockedMsg('Team mode', 'team'); onTeamToggle?.(e.target.checked) }} />
+                        </label>
+                      )}
+                      {mode === 'agent' && (
+                        <label className="more-row">
+                          <span>{plan.can('crew') ? '' : '👑 '}Agent crew (research, confirm, build)</span>
+                          <input type="checkbox" checked={crewOn && plan.can('crew')} onChange={(e) => { if (!plan.can('crew')) return lockedMsg('Agent crew', 'crew'); toggleCrew(e.target.checked) }} />
                         </label>
                       )}
                       <label className="more-row full-access-row">
-                        <span>Full access mode</span>
-                        <input type="checkbox" checked={!!fullAccess} onChange={(e) => onFullAccessToggle?.(e.target.checked)} />
+                        <span>{plan.can('fullAccess') ? '' : '👑 '}Full access mode</span>
+                        <input type="checkbox" checked={!!fullAccess && plan.can('fullAccess')} onChange={(e) => { if (!plan.can('fullAccess')) return lockedMsg('Full access mode', 'fullAccess'); onFullAccessToggle?.(e.target.checked) }} />
                         <span className="full-access-tip" role="tooltip">
                           Warning: this gives the AI full access to your files and terminal. It edits files and runs commands by itself, with no confirmation, and keeps fixing errors until it works. Uses more tokens.
                         </span>
@@ -774,6 +828,12 @@ setMessages((m) => {
                   </div>
                 )}
                 {!isUser && msg.activity && <ActivityLog items={msg.activity} />}
+                {!isUser && msg._crew && !crewDone.includes(msg.time) && !streaming && i === messages.length - 1 && (
+                  <div className="crew-actions">
+                    <button className="action-btn" onClick={() => confirmCrew(i, msg)}>Looks right, build it</button>
+                    <button className="topbar-btn small" onClick={() => { setInput(`Change the spec: `); inputRef.current?.focus() }}>Change something</button>
+                  </div>
+                )}
                 {msg.imageCount > 0 && (
                   <div className="chat-image-chip">🖼 {msg.imageCount} image{msg.imageCount > 1 ? 's' : ''} attached</div>
                 )}
@@ -898,8 +958,14 @@ setMessages((m) => {
               <ModelSwitcher value={model} onChange={onModelChange} disabled={streaming} compact up />
               <ThinkingSwitcher value={thinking} onChange={onThinkingChange} disabled={streaming} compact up />
             </div>
+            {(streaming || cmdBusyUi) && (
+              <button className="chat-send chat-stop" onClick={() => window.dispatchEvent(new CustomEvent('qoders-stop-all'))} title="Stop the AI and everything it is running">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2.5" /></svg>
+              </button>
+            )}
             <button
               className="chat-send"
+              style={streaming || cmdBusyUi ? { display: 'none' } : undefined}
               onClick={send}
               disabled={streaming || (!input.trim() && images.length === 0)}
               title={mode === 'agent' ? 'Plan changes' : 'Send'}

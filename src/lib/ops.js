@@ -85,3 +85,37 @@ export function resolveOp(files, op) {
 
   return { before, after: fixFlat(op.content ?? ''), errors: [] }
 }
+
+// The AI sometimes writes "my-app/src/App.jsx" or "./src/app.jsx" when the project already has "src/App.jsx".
+// Point such paths at the files that already exist so they are rewritten, not duplicated into a new folder.
+export function remapOps(files, ops) {
+  if (!files || !Array.isArray(ops)) return ops
+  const paths = Object.keys(files)
+  if (!paths.length) return ops
+  const lower = new Map(paths.map((p) => [p.toLowerCase(), p]))
+  const tops = new Set(paths.filter((p) => p.includes('/')).map((p) => p.split('/')[0]))
+  const clean = (p) => String(p || '').trim().replace(/\\/g, '/').replace(/^(\.\/)+/, '').replace(/^\/+/, '')
+  const fix = (p) => {
+    const c = clean(p)
+    if (files[c]) return c
+    if (lower.has(c.toLowerCase())) return lower.get(c.toLowerCase())
+    const parts = c.split('/')
+    for (let i = 1; i < parts.length && i <= 2; i++) {
+      const rest = parts.slice(i).join('/')
+      if (!tops.has(parts[0]) && (files[rest] || lower.has(rest.toLowerCase()))) return files[rest] ? rest : lower.get(rest.toLowerCase())
+    }
+    return c
+  }
+  // one wrapper folder around everything (e.g. "my-app/..."): drop it when the project has no such folder
+  const cl = ops.map((o) => (o && typeof o.path === 'string' ? clean(o.path) : ''))
+  const wrap = cl[0] ? cl[0].split('/')[0] : ''
+  const wrapped = wrap && !tops.has(wrap) && !files[wrap] && cl.every((p) => !p || (p.includes('/') && p.split('/')[0] === wrap))
+  let work = ops
+  if (wrapped) {
+    const inner = cl.map((p) => p.split('/').slice(1).join('/'))
+    if (inner.some((p) => files[p] || lower.has(p.toLowerCase())) || paths.some((p) => !p.includes('/') || ['src', 'public'].includes(p.split('/')[0]))) {
+      work = ops.map((o, i) => (cl[i] ? { ...o, path: inner[i] } : o))
+    }
+  }
+  return work.map((op) => (op && typeof op.path === 'string' && op.path ? { ...op, path: fix(op.path) } : op))
+}

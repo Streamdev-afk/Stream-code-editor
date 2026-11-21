@@ -167,30 +167,10 @@ export default function UsageDropdown({ onUpgrade, onManage }) {
           {usage.tier === 'free' && (
             <div className="usage-menu-cta upgrade">
               <div className="usage-cta-text">
-                Upgrade for higher limits
+                Upgrade for higher limits and better models
               </div>
-              <div className="upgrade-buttons">
-                <button
-                  className="upgrade-btn"
-                  onClick={() => onUpgrade?.('pro3x')}
-                >
-                  <div className="upgrade-btn-name">Pro 3×</div>
-                  <div className="upgrade-btn-price">₦3,000/mo</div>
-                </button>
-                <button
-                  className="upgrade-btn"
-                  onClick={() => onUpgrade?.('pro5x')}
-                >
-                  <div className="upgrade-btn-name">Pro 5×</div>
-                  <div className="upgrade-btn-price">₦5,000/mo</div>
-                </button>
-                <button
-                  className="upgrade-btn"
-                  onClick={() => onUpgrade?.('pro10x')}
-                >
-                  <div className="upgrade-btn-name">Pro 10×</div>
-                  <div className="upgrade-btn-price">₦9,000/mo</div>
-                </button>
+              <div className="usage-cta-hint">
+                Buy a plan in the ION app (Plans) with this same login. Your editor plan follows it.
               </div>
             </div>
           )}
