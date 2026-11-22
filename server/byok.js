@@ -12,7 +12,18 @@ const PRESETS = {
   together: 'https://api.together.xyz/v1',
   groq: 'https://api.groq.com/openai/v1',
   mistral: 'https://api.mistral.ai/v1',
+  gemini: 'https://generativelanguage.googleapis.com/v1beta/openai',
+  anthropic: 'https://api.anthropic.com/v1',
+  xai: 'https://api.x.ai/v1',
+  cerebras: 'https://api.cerebras.ai/v1',
+  nvidia: 'https://integrate.api.nvidia.com/v1',
+  fireworks: 'https://api.fireworks.ai/inference/v1',
 }
+
+const authHeaders = (cfg) => ({
+  Authorization: `Bearer ${cfg.key}`,
+  ...(cfg.provider === 'anthropic' ? { 'x-api-key': cfg.key, 'anthropic-version': '2023-06-01' } : {}),
+})
 
 function privateHost(h) {
   h = h.toLowerCase()
@@ -58,7 +69,7 @@ export async function byokCreate(params, cfg) {
   if (body.max_tokens && body.max_tokens > 16000) body.max_tokens = 16000
   const res = await fetch(`${cfg.base}/chat/completions`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.key}` },
+    headers: { 'Content-Type': 'application/json', ...authHeaders(cfg) },
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(300000),
   })
@@ -100,10 +111,20 @@ export function byokError(err) {
 
 const NOT_CHAT = /embed|whisper|tts|speech|moderation|dall-e|image|audio|realtime|transcribe|rerank|guard|vision-preview-old|babbage|davinci|ada\b/i
 
+// Which models are free to use today with this kind of key (free tiers), so people are not shown models they cannot use.
+const freeFor = (cfg, arr, ids) => {
+  if (cfg.provider === 'openrouter' || /openrouter\.ai/.test(cfg.base)) {
+    return arr.filter((m) => typeof m === 'object' && m && (/:free$/.test(m.id) || (m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0))).map((m) => m.id)
+  }
+  if (cfg.provider === 'gemini') return ids.filter((id) => /flash|gemma/i.test(id) && !/preview-image|image|live|tts/i.test(id))
+  if (['groq', 'cerebras', 'nvidia'].includes(cfg.provider)) return ids
+  return []
+}
+
 // Asks the provider which models this key may use.
 export async function listModels(cfg) {
-  const res = await fetch(`${cfg.base}/models`, {
-    headers: { Authorization: `Bearer ${cfg.key}` },
+  const res = await fetch(`${cfg.base}/models${cfg.provider === 'gemini' ? '?pageSize=200' : ''}`, {
+    headers: authHeaders(cfg),
     signal: AbortSignal.timeout(20000),
   })
   if (!res.ok) {
@@ -115,6 +136,9 @@ export async function listModels(cfg) {
   }
   const j = await res.json()
   const arr = Array.isArray(j) ? j : j.data || j.models || []
-  const ids = arr.map((m) => (typeof m === 'string' ? m : m.id || m.name)).filter(Boolean)
-  return [...new Set(ids)].filter((id) => !NOT_CHAT.test(id)).sort((a, b) => a.localeCompare(b)).slice(0, 600)
+  const strip = (id) => String(id).replace(/^models\//, '')
+  const ids = [...new Set(arr.map((m) => (typeof m === 'string' ? m : m.id || m.name)).filter(Boolean).map(strip))].filter((id) => !NOT_CHAT.test(id)).sort((a, b) => a.localeCompare(b)).slice(0, 600)
+  const set = new Set(ids)
+  const free = freeFor(cfg, arr.map((m) => (typeof m === 'object' && m ? { ...m, id: strip(m.id || m.name || '') } : m)), ids).filter((id) => set.has(id))
+  return { models: ids, free }
 }

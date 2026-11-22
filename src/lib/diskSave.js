@@ -3,6 +3,10 @@
 // Anything else: the file downloads instead.
 
 const KEY = (pid) => `ion-disk-folder:${pid}`
+// ONE workspace folder, chosen once. Every project gets its own folder inside it (workspace/<project name>/...),
+// next to the other projects, never inside another project.
+const WS = 'ion-workspace'
+export const workspaceOn = () => { try { return !!localStorage.getItem(WS) } catch { return false } }
 
 export const isDesktopApp = () => !!(typeof window !== 'undefined' && window.desktop?.saveFile)
 export const canPickFolder = () => isDesktopApp() || (typeof window !== 'undefined' && typeof window.showDirectoryPicker === 'function')
@@ -32,17 +36,17 @@ const layouts = {}
 const slug = (t) => String(t || 'project').toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'project'
 export function noteLayout(pid, files, title) {
   const paths = Object.keys(files || {}).filter((p) => typeof files[p]?.content === 'string' && !/^ION_MEMORY\.md$/.test(p))
-  let direct = false
-  try { direct = localStorage.getItem(`ion-disk-direct:${pid}`) === '1' } catch {}
-  if (direct) { layouts[pid] = { savePrefix: '', dirName: '', importPrefix: '' }; return layouts[pid] }
   const tops = new Set(paths.map((p) => (p.includes('/') ? p.split('/')[0] : null)))
-  if (paths.length && !tops.has(null) && tops.size === 1) {
-    const top = [...tops][0]
-    layouts[pid] = { savePrefix: '', dirName: top, importPrefix: `${top}/` }
-  } else {
-    const name = slug(title)
-    layouts[pid] = { savePrefix: `${name}/`, dirName: name, importPrefix: '' }
+  const single = paths.length && !tops.has(null) && tops.size === 1 ? [...tops][0] : null
+  // Saving always rewrites the SAME file in the SAME place. A project's files never get an extra copy of its own folder around them.
+  if (workspaceOn()) {
+    // the workspace holds one folder per project: workspace/<project>/<files>
+    if (single) layouts[pid] = { savePrefix: '', dirName: single, importPrefix: `${single}/` }
+    else { const name = slug(title); layouts[pid] = { savePrefix: `${name}/`, dirName: name, importPrefix: '' } }
+    return layouts[pid]
   }
+  // an older folder linked to this one project: that folder IS the project, files go straight in it
+  layouts[pid] = { savePrefix: '', dirName: '', importPrefix: '' }
   return layouts[pid]
 }
 export const layoutFor = (pid) => layouts[pid] || { savePrefix: '', dirName: '', importPrefix: '' }
@@ -60,25 +64,36 @@ const lastName = (p) => String(p).split(/[\\/]/).filter(Boolean).pop() || String
 /** Name of the linked folder for this project, or null. */
 export async function linkedFolder(pid) {
   try {
-    if (isDesktopApp()) { const p = localStorage.getItem(KEY(pid)); return p ? { name: lastName(p), path: p } : null }
-    const h = await idbGet(KEY(pid))
+    if (isDesktopApp()) {
+      const w = localStorage.getItem(WS)
+      if (w && w !== '1') return { name: lastName(w), path: w, workspace: true }
+      const p = localStorage.getItem(KEY(pid))
+      return p ? { name: lastName(p), path: p } : null
+    }
+    const h = (await idbGet(WS)) || (await idbGet(KEY(pid)))
     return h ? { name: h.name } : null
   } catch { return null }
 }
 
-/** Opens the folder picker. Returns { name } or null if cancelled. Needs a click or key press. */
-export async function chooseFolder(pid) {
+/** The handle used for saving in the browser: the workspace folder first, else this project's own folder. */
+async function browserHandle(pid) {
+  return (await idbGet(WS)) || (await idbGet(KEY(pid)))
+}
+
+/** Opens the folder picker for the workspace (where all projects live). Returns { name } or null if cancelled. Needs a click or key press. */
+export async function chooseFolder() {
   if (isDesktopApp()) {
     const p = await window.desktop.pickFolder()
     if (!p) return null
-    localStorage.setItem(KEY(pid), p)
-    return { name: lastName(p), path: p }
+    localStorage.setItem(WS, p)
+    return { name: lastName(p), path: p, workspace: true }
   }
   if (!canPickFolder()) return null
   try {
     const h = await window.showDirectoryPicker({ mode: 'readwrite' })
-    await idbSet(KEY(pid), h)
-    return { name: h.name }
+    await idbSet(WS, h)
+    localStorage.setItem(WS, '1')
+    return { name: h.name, workspace: true }
   } catch { return null } // cancelled
 }
 
@@ -116,7 +131,7 @@ export async function saveToDisk(pid, relIn, content, { askFolder = true } = {})
       return { ok: true, where: 'folder', folder: link.name }
     }
     if (canPickFolder()) {
-      let h = await idbGet(KEY(pid))
+      let h = await browserHandle(pid)
       if (h) {
         let perm = await h.queryPermission?.({ mode: 'readwrite' })
         if (perm !== 'granted') perm = await h.requestPermission?.({ mode: 'readwrite' })
@@ -124,7 +139,7 @@ export async function saveToDisk(pid, relIn, content, { askFolder = true } = {})
       }
       if (!h && askFolder) {
         const c = await chooseFolder(pid)
-        h = c ? await idbGet(KEY(pid)) : null
+        h = c ? await browserHandle(pid) : null
       }
       if (!h) return { ok: false, where: null, cancelled: true }
       const { dir, name } = await dirFor(h, rel)

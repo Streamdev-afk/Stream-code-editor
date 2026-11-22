@@ -90,7 +90,7 @@ app.post('/api/byok/models', async (req, res) => {
   if (!cfg) return res.status(400).json({ error: 'Enter your API key first.' })
   if (cfg.error) return res.status(400).json({ error: cfg.error })
   try {
-    res.json({ models: await listModels(cfg) })
+    res.json(await listModels(cfg))
   } catch (e) {
     res.status(e.status === 401 || e.status === 403 ? 401 : 502).json({ error: byokError(e) })
   }
@@ -828,17 +828,17 @@ function rulesBlock(req, lite) {
     out += `\n\n## FULL ACCESS MODE (the user is away and trusts you)
 - Nobody will approve anything. Do the whole job yourself and keep going until it works.
 - Never ask questions or offer options. Decide, and say in one short line what you chose.
-- After you create or change project files, ALWAYS add run_command actions: first install ("cd <folder> && npm install" or the right one for the stack), then start it (for example "cd <folder> && npm run dev"). Skip a command only if it already ran successfully and nothing it depends on changed.
-- When the terminal output shows an error, find the cause, fix the files, then add the run_command again so it is re-run.
-- Keep every reply very short (one or two lines). No long explanations, no code in the reply text.
+- WRITE THE FILES FIRST. Run a command only if the job truly needs one (installing packages, a build step, starting a dev server, or the user asked for it). A plain HTML/CSS/JS site needs NO command: write the files, say it is done and that they can open the preview. Never run commands just because you have full access.
+- Keep every command SIMPLE: one short command per run_command action, the plain form (for example "npm install", not a long command with many flags or several things chained together). Never chain with && or ;. Do not add "cd" when the terminal is already in the project folder; use "cd" only to a folder you can see in the WORKSPACE listing.
+- One command at a time. After a command the app sends you ONLY that command's result. Wait for it. If it worked and another command is really needed, send the next one. If it failed, read its error, fix the files, then run that same command again. Never go back to older errors or old output, and never start something new while a command is unfinished.
+- Do not repeat a command that already succeeded unless the files it depends on changed.
 - You cannot see the page. Say so once at the end and ask the user to tell you if something looks wrong.`
   }
   if (!lite) {
     out += `\n\n## PROJECT FOLDERS (always follow)
-- A NEW project goes inside ONE main folder named after the project (lowercase-with-dashes), with its subfolders inside it, for example my-site/package.json, my-site/index.html, my-site/src/main.tsx, my-site/public/logo.svg. Never spread a new project's files over the top level.
-- If the existing files already live in one main folder, keep working inside that folder. Do not make a second one.
-- If the user wants a new project and did not give it a name, and questions are allowed, ask for the project name first (suggest 2 short names; they can type their own). Use the name they pick for the folder.
-- Terminal commands run in the project's folder on the user's computer. If package.json sits in a subfolder of that folder, write commands like "cd my-site && npm install".
+- The editor session already IS the project. Put files at its root (index.html, src/..., package.json). Do NOT wrap them in an extra main folder and do not scaffold a new project inside the existing one, unless the existing files already all live inside one folder (then keep using it).
+- Editing or rewriting an existing file means writing that SAME path again. Never create a second copy of it in a new folder.
+- Terminal commands run in the project's folder on the user's computer (see WORKSPACE in the editor context). Only use "cd" to a folder that is listed there.
 - A project with a package.json (Vite, React, Next, TypeScript, 3D) cannot show in the plain inline preview. After writing its files, tell the user the commands (npm install, then npm run dev) in a copyable code block and that the Local tab will show the running site. Only add run_command actions if the user asked to run it.`
     const ctx = clip(b.appContext, 7000)
     if (ctx) out += `\n\n## ABOUT THE EDITOR AND THE USER\n${ctx}`

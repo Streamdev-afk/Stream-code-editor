@@ -44,6 +44,7 @@ function ByokSection() {
   const [loadErr, setLoadErr] = useState('')
   const [q, setQ] = useState('')
   const [freeOnly, setFreeOnly] = useState(false)
+  const [freeIds, setFreeIds] = useState([])
   const prov = PROVIDERS.find((p) => p.id === v.provider) || PROVIDERS[0]
   const upd = (patch) => { setDone(false); setV((x) => ({ ...x, ...patch })) }
   const ready = v.key && v.model && (v.provider !== 'custom' || v.base)
@@ -59,8 +60,9 @@ function ByokSection() {
       const d = await res.json()
       if (!res.ok) throw new Error(d.error || 'Could not load models')
       setModels(d.models || [])
+      setFreeIds(d.free || [])
       if (!(d.models || []).length) setLoadErr('This key did not return any chat models. You can still type a model name.')
-      else if (!d.models.includes(v.model)) upd({ model: (d.models.find((m) => /:free$/.test(m)) || d.models[0]) })
+      else if (!d.models.includes(v.model)) upd({ model: ((d.free || []).find((m) => d.models.includes(m)) || d.models[0]) })
     } catch (e) { if (!silent) setLoadErr(e.message); setModels([]) }
     finally { setLoading(false) }
   }
@@ -104,15 +106,15 @@ function ByokSection() {
           <>
             <div className="byok-keyrow" style={{ marginTop: 6 }}>
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${models.length} models`} autoCapitalize="off" spellCheck="false" />
-              <button type="button" className="byok-eye" style={freeOnly ? { background: 'var(--accent)', color: '#fff' } : undefined} onClick={() => setFreeOnly((x) => !x)}>Free only</button>
+              {freeIds.length > 0 && <button type="button" className="byok-eye" style={freeOnly ? { background: 'var(--accent)', color: '#fff' } : undefined} onClick={() => setFreeOnly((x) => !x)}>Free to use today ({freeIds.length})</button>}
             </div>
             <div className="byok-list">
               {models
-                .filter((m) => (!freeOnly || /:free$/.test(m)) && m.toLowerCase().includes(q.trim().toLowerCase()))
+                .filter((m) => (!freeOnly || freeIds.includes(m)) && m.toLowerCase().includes(q.trim().toLowerCase()))
                 .slice(0, 300)
                 .map((m) => (
                   <button type="button" key={m} className={`byok-item ${m === v.model ? 'on' : ''}`} onClick={() => upd({ model: m })}>
-                    <span>{m}</span>{/:free$/.test(m) && <em>free</em>}
+                    <span>{m}</span>{freeIds.includes(m) && <em>free</em>}
                   </button>
                 ))}
             </div>

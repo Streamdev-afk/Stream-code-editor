@@ -97,7 +97,7 @@ ipcMain.handle('oauth-open', (_e, url) => new Promise((resolve) => {
 // ---------- saving projects to a folder on this computer ----------
 ipcMain.handle('app-version', () => app.getVersion())
 ipcMain.handle('disk-pick', async () => {
-  const r = await dialog.showOpenDialog({ title: 'Choose a folder for this project', properties: ['openDirectory', 'createDirectory'] })
+  const r = await dialog.showOpenDialog({ title: 'Choose where your projects should live (each project gets its own folder inside)', properties: ['openDirectory', 'createDirectory'] })
   return r.canceled || !r.filePaths[0] ? null : r.filePaths[0]
 })
 ipcMain.handle('disk-save', async (_e, { root, rel, content }) => {

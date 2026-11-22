@@ -3,6 +3,7 @@
 const state = { terminal: [], console: [], github: null, aiName: '', userName: '', memory: '', progress: '', workspace: '' }
 export const setCtx = (key, value) => { state[key] = value }
 // a different project/session starts: forget its terminal output, console errors and unfinished-work notes
+export const clearTerminalCtx = () => { state.terminal = [] }
 export const resetSessionCtx = () => { state.terminal = []; state.console = []; state.progress = '' }
 
 const GUIDE = `You are the AI inside ION Qoders, a code editor that runs in the browser and as a desktop app. You know how it works:
