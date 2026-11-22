@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import Icon from './Icon'
 import { getFileIcon } from '../lib/fileIcons'
 
-export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClose, onSplit, splitOn, rightSlot }) {
+export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClose, onSplit, onReorder, splitOn, rightSlot }) {
   const [menu, setMenu] = useState(null)
   const [pinned, setPinned] = useState(() => { try { return JSON.parse(localStorage.getItem('qoders-pinned') || '[]') } catch { return [] } })
   useEffect(() => { try { localStorage.setItem('qoders-pinned', JSON.stringify(pinned)) } catch {} }, [pinned])
@@ -20,6 +20,7 @@ export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClo
 
   return (
     <div className="tabs-bar">
+      <div className="panel-grip" draggable title="Drag to move the editor" onDragStart={(e) => { e.dataTransfer.setData('text/panel', 'editor'); e.dataTransfer.effectAllowed = 'move' }}>⠿</div>
       <div className="tabs-scroll">
       {ordered.map((path) => {
         const name = path.split('/').pop()
@@ -32,6 +33,10 @@ export default function Tabs({ openTabs, activeFile, dirty, onTabClick, onTabClo
             key={path}
             className={`tab ${isActive ? 'active' : ''} ${isDirty ? 'dirty' : ''} ${isPinned ? 'pinned' : ''}`}
             onClick={() => onTabClick(path)}
+            draggable
+            onDragStart={(e) => { e.dataTransfer.setData('text/tab', path); e.dataTransfer.effectAllowed = 'move' }}
+            onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes('text/tab')) e.preventDefault() }}
+            onDrop={(e) => { const from = e.dataTransfer.getData('text/tab'); if (from && from !== path) { e.preventDefault(); onReorder?.(from, path) } }}
             onContextMenu={(e) => { e.preventDefault(); setMenu({ x: e.clientX, y: e.clientY, path }) }}
             onAuxClick={(e) => { if (e.button === 1 && !isPinned) { e.preventDefault(); onTabClose(path) } }}
             title={path}

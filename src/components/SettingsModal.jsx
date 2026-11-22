@@ -139,7 +139,7 @@ const PAGES = [
   { id: 'plan', label: 'Plan & usage', desc: 'Your plan, usage and billing', icon: 'gem' },
   { id: 'models', label: 'AI models', desc: 'What each model is good at', icon: 'bot' },
   { id: 'ai', label: 'AI assistant', desc: 'Web search, team mode, typing speed', icon: 'bot' },
-  { id: 'models', label: 'AI models', desc: 'Use your own API key', icon: 'bolt' },
+  { id: 'byok', label: 'Your own API key', desc: 'Use your own key from any provider', icon: 'bolt' },
   { id: 'github', label: 'GitHub & connections', desc: 'Repos, push, pull and ION characters', icon: 'github' },
   { id: 'editor', label: 'Editor', desc: 'Font, tabs, wrapping and more', icon: 'edit' },
   { id: 'appearance', label: 'Appearance', desc: 'Theme colours and motion', icon: 'star' },
@@ -230,9 +230,7 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <Row label="Tab autocomplete" hint="Grey suggestions appear while you type; press Tab to accept. Go plan and up.">
               <Toggle value={!!settings.autocomplete} onChange={(v) => set('autocomplete', v)} />
             </Row>
-            <Row label="AI panel side" hint="Put the chat on the left or the right of the editor (also the ⇄ button in the side bar)">
-              {seg('aiSide', [['right', 'Right'], ['left', 'Left']])}
-            </Row>
+
             <Row label="AI nickname" hint="What the AI should be called">
               <input className="sp-input" style={{ width: 160 }} maxLength={24} value={settings.aiName || ''} placeholder="e.g. Nova" onChange={(e) => set('aiName', e.target.value)} />
             </Row>
@@ -245,7 +243,7 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             <Row label="Tidy cramped code" hint="Auto-format code the AI wrote on one long line">
               <Toggle value={settings.autoFormat !== false} onChange={(v) => set('autoFormat', v)} />
             </Row></div>,
-    models: <div className="sp-card"><ByokSection /></div>,
+    byok: <div className="sp-card"><ByokSection /></div>,
     github: (
       <>
         <div className="sp-card"><div className="sp-card-title">GitHub</div><GitHubSettings /></div>
@@ -331,6 +329,9 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
               {seg('whitespace', [['none', 'Off'], ['boundary', 'Edges'], ['all', 'All']])}
             </Row></div>,
     appearance: <div className="sp-card">
+            <Row label="Panel layout" hint="Drag the ⠿ handle on the side bar, the editor tabs or the AI panel onto another panel to swap places. The terminal stays at the bottom.">
+              <button className="gh-btn" onClick={() => onChange({ ...settings, panelOrder: undefined, sbOrder: undefined, aiSide: undefined })}>Reset layout</button>
+            </Row>
             <Row label="Accent theme" hint="Colors the whole app">
               <div className="theme-picker">
                 {Object.entries(THEMES).map(([key, theme]) => (

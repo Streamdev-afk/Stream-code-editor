@@ -2,7 +2,7 @@ import { useMemo } from 'react'
 import { diffFiles } from '../lib/baseline'
 
 const LABEL = { M: 'Modified', A: 'New', D: 'Deleted' }
-export default function SourceControl({ sessionId, files, onOpen, onPush }) {
+export default function SourceControl({ sessionId, files, onOpen, onPush, onReview }) {
   const changes = useMemo(() => diffFiles(sessionId, files), [sessionId, files])
   const repo = (() => { try { return localStorage.getItem('qoders-lastrepo') || '' } catch { return '' } })()
   return (
@@ -18,7 +18,7 @@ export default function SourceControl({ sessionId, files, onOpen, onPush }) {
           </button>
         ))}
       </div>
-      <div className="sc-foot"><button className="gh-btn gh-btn-primary" onClick={onPush}>{changes.length ? `Commit & push ${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Push to GitHub'}</button></div>
+      <div className="sc-foot">{onReview && changes.length > 0 && <button className="gh-btn" style={{ marginBottom: 8 }} onClick={onReview}>✦ Review changes with AI</button>}<button className="gh-btn gh-btn-primary" onClick={onPush}>{changes.length ? `Commit & push ${changes.length} change${changes.length === 1 ? '' : 's'}` : 'Push to GitHub'}</button></div>
     </div>
   )
 }

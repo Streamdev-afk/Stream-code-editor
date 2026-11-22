@@ -580,6 +580,7 @@ setMessages((m) => {
 
   return (
     <div
+      data-panel="ai"
       className={`aichat ${dragOver ? 'drag-over' : ''}`}
       onDragOver={(e) => {
         if (Array.from(e.dataTransfer?.types || []).includes('Files')) {
@@ -596,6 +597,7 @@ setMessages((m) => {
     >
             <div className="panel-header aichat-header">
         <div className="aichat-header-row">
+          <div className="panel-grip" draggable title="Drag to move the AI panel" onDragStart={(e) => { e.dataTransfer.setData('text/panel', 'ai'); e.dataTransfer.effectAllowed = 'move' }}>⠿</div>
           <div className="mode-switch">
             <button
               className={`mode-btn ${mode === 'chat' ? 'active' : ''}`}

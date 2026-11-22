@@ -36,8 +36,9 @@ import { applyTheme } from './lib/theme'
 import HistoryPanel from './components/HistoryPanel'
 import Outline from './components/Outline'
 import SourceControl from './components/SourceControl'
+import { normalizeOrder, normalizeSb, swapIn } from './lib/layout'
 import DeployModal from './components/DeployModal'
-import { ensureBaseline, resetBaseline, diffFiles } from './lib/baseline'
+import { ensureBaseline, resetBaseline, diffFiles, changeSummary } from './lib/baseline'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
@@ -448,6 +449,49 @@ const [showLogin, setShowLogin] = useState(false)
     return () => window.removeEventListener('qoders-pushed', h)
   }, [activeSession.id])
   const gitChanges = diffFiles(activeSession.id, files)
+
+  // movable panels: drag the ⠿ handle of the side bar, the editor tabs or the AI panel onto another one to swap places
+  const panelOrder = normalizeOrder(settings.panelOrder, settings.aiSide)
+  const sbOrder = normalizeSb(settings.sbOrder)
+  const [dropPanel, setDropPanel] = useState(null)
+  useEffect(() => {
+    const end = () => setDropPanel(null)
+    window.addEventListener('dragend', end); window.addEventListener('drop', end)
+    return () => { window.removeEventListener('dragend', end); window.removeEventListener('drop', end) }
+  }, [])
+  const isPanelDrag = (e) => Array.from(e.dataTransfer?.types || []).includes('text/panel')
+  const onPanelDragOver = (e) => {
+    if (!isPanelDrag(e)) return
+    e.preventDefault(); e.stopPropagation(); e.dataTransfer.dropEffect = 'move'
+    const hit = Array.from(e.currentTarget.children).find((c) => { if (!c.dataset?.panel) return false; const r = c.getBoundingClientRect(); return e.clientX >= r.left && e.clientX <= r.right })
+    setDropPanel(hit ? hit.dataset.panel : null)
+  }
+  const onPanelDrop = (e) => {
+    if (!isPanelDrag(e)) return
+    e.preventDefault(); e.stopPropagation()
+    const from = e.dataTransfer.getData('text/panel'); const to = dropPanel
+    setDropPanel(null)
+    if (from && to && from !== to) setSettings((x) => ({ ...x, aiSide: undefined, panelOrder: swapIn(normalizeOrder(x.panelOrder, x.aiSide), from, to) }))
+  }
+  const moveAiToOtherEnd = () => setSettings((x) => {
+    const cur = normalizeOrder(x.panelOrder, x.aiSide)
+    const target = cur.indexOf('ai') === cur.length - 1 ? cur[0] : cur[cur.length - 1]
+    return { ...x, aiSide: undefined, panelOrder: swapIn(cur, 'ai', target) }
+  })
+  const reorderTabs = (from, to) => setOpenTabs((cur) => {
+    if (!cur.includes(from) || !cur.includes(to) || from === to) return cur
+    const fi = cur.indexOf(from); const ti = cur.indexOf(to)
+    const rest = cur.filter((p) => p !== from)
+    rest.splice(fi < ti ? rest.indexOf(to) + 1 : rest.indexOf(to), 0, from)
+    return rest
+  })
+  const SB = {
+    explorer: { title: 'Explorer (files)', icon: <Icon name="folder" size={17} /> },
+    search: { title: 'Search across files (Ctrl+Shift+F)', icon: <Icon name="search" size={17} /> },
+    history: { title: 'Version history', icon: <Icon name="clock" size={17} /> },
+    git: { title: 'Source control: what changed since the last push', icon: '⎇' },
+    outline: { title: 'Outline: functions and sections of this file', icon: '{ }' },
+  }
   window.__qodersGit = Object.fromEntries(gitChanges.map((c) => [c.path, c.status]))
   useEffect(() => { window.__qodersAC = !!settings.autocomplete && planInfo.can('fullAccess') }, [settings.autocomplete, planInfo.plan, planInfo.loaded])
   useEffect(() => { if (fullAccess && planInfo.loaded && !planInfo.can('fullAccess')) toggleFullAccess(false) }, [planInfo.plan, planInfo.loaded, fullAccess])
@@ -1869,39 +1913,36 @@ case 'importZip': setShowImport(true); break
     }
   />
 ) : (
-  <div className={`main ${settings.aiSide === 'left' ? 'ai-left' : ''}`}>
+  <div
+    className="main"
+    data-drop={dropPanel || ''}
+    style={{ '--o-sidebar': panelOrder.indexOf('sidebar'), '--o-editor': panelOrder.indexOf('editor'), '--o-ai': panelOrder.indexOf('ai') }}
+    onDragOverCapture={onPanelDragOver}
+    onDropCapture={onPanelDrop}
+  >
     {showSidebar && (
-      <div className="sidebar-wrap">
+      <div className="sidebar-wrap" data-panel="sidebar">
         <div className="sidebar-tabs">
-          <button
-            className={`sidebar-tab ${sidebarTab === 'explorer' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('explorer')}
-            title="Explorer (files)"
-          ><Icon name="folder" size={17} /></button>
-          <button
-            className={`sidebar-tab ${sidebarTab === 'search' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('search')}
-            title="Search across files (Ctrl+Shift+F)"
-          ><Icon name="search" size={17} /></button>
-          <button
-            className={`sidebar-tab ${sidebarTab === 'history' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('history')}
-            title="Version history"
-          ><Icon name="clock" size={17} /></button>
-          <button
-            className={`sidebar-tab ${sidebarTab === 'git' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('git')}
-            title="Source control: what changed since the last push"
-          >⎇{gitChanges.length > 0 && <i className="tab-count">{gitChanges.length}</i>}</button>
-          <button
-            className={`sidebar-tab ${sidebarTab === 'outline' ? 'active' : ''}`}
-            onClick={() => setSidebarTab('outline')}
-            title="Outline: functions and sections of this file"
-          >{'{ }'}</button>
+          <div className="panel-grip" draggable title="Drag to move the side bar" onDragStart={(e) => { e.dataTransfer.setData('text/panel', 'sidebar'); e.dataTransfer.effectAllowed = 'move' }}>⠿</div>
+          {sbOrder.map((id) => (
+            <button
+              key={id}
+              draggable
+              className={`sidebar-tab ${sidebarTab === id ? 'active' : ''}`}
+              onClick={() => setSidebarTab(id)}
+              title={`${SB[id].title} (drag to reorder)`}
+              onDragStart={(e) => { e.dataTransfer.setData('text/sbtab', id); e.dataTransfer.effectAllowed = 'move' }}
+              onDragOver={(e) => { if (Array.from(e.dataTransfer.types).includes('text/sbtab')) e.preventDefault() }}
+              onDrop={(e) => {
+                const from = e.dataTransfer.getData('text/sbtab')
+                if (from && from !== id) { e.preventDefault(); setSettings((x) => ({ ...x, sbOrder: swapIn(normalizeSb(x.sbOrder), from, id) })) }
+              }}
+            >{SB[id].icon}{id === 'git' && gitChanges.length > 0 && <i className="tab-count">{gitChanges.length}</i>}</button>
+          ))}
           <button
             className="sidebar-tab activity-end"
-            onClick={() => setSettings((x) => ({ ...x, aiSide: x.aiSide === 'left' ? 'right' : 'left' }))}
-            title="Move the AI panel to the other side"
+            onClick={moveAiToOtherEnd}
+            title="Move the AI panel to the other end (or drag the ⠿ handles to place any panel)"
           >⇄</button>
         </div>
         <div className="sidebar-panel">
@@ -1932,7 +1973,21 @@ case 'importZip': setShowImport(true); break
           />
         )}
         {sidebarTab === 'git' && (
-          <SourceControl sessionId={activeSession.id} files={files} onOpen={openFile} onPush={handleGitHubPush} />
+          <SourceControl
+            sessionId={activeSession.id}
+            files={files}
+            onOpen={openFile}
+            onPush={handleGitHubPush}
+            onReview={() => {
+              const sum = changeSummary(activeSession.id, files)
+              if (!sum) return
+              setShowAI?.(true)
+              setPendingAi({
+                prompt: `Review my changes before I push them to GitHub. This is a REVIEW ONLY: do not edit, create or delete any files and do not run commands.\n\nLook for: bugs, broken imports or names, leftover debug code (console.log, TODO), secrets or API keys that must not be public, missing error handling, and anything that looks half-finished. Answer with a short list: what is fine, then the problems (file and what is wrong), then a one-line verdict: safe to push or not.\n\nChanges (+ added, - removed):\n${sum}`,
+                shown: 'Review my changes before I push',
+              })
+            }}
+          />
         )}
         {sidebarTab === 'outline' && (
           <Outline code={activeContent} path={activeFile} onGoto={gotoLine} />
@@ -1940,7 +1995,7 @@ case 'importZip': setShowImport(true); break
         </div>
       </div>
     )}
-    <div className="editor-pane">
+    <div className="editor-pane" data-panel="editor">
       <div className="editor-flash" key={`${viewMode}:${activeFile}`} aria-hidden="true" />
       {viewMode === 'code' ? (
         <>
@@ -1950,6 +2005,7 @@ case 'importZip': setShowImport(true); break
             dirty={dirty}
             onTabClick={setActiveFile}
             onTabClose={closeTab}
+            onReorder={reorderTabs}
             onSplit={(p) => setSplitFile((cur) => (cur === p ? null : p))}
             splitOn={!!splitFile}
             rightSlot={aiActionsSlot}
