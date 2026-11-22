@@ -16,7 +16,7 @@ import { streamEdit, streamAgent } from './lib/ai'
 import { resolveOp } from './lib/ops'
 import { stopAI } from './lib/supabase'
 import { usePlan } from './lib/plan'
-import { setCtx as setAiCtx, resetSessionCtx } from './lib/appContext'
+import { setCtx as setAiCtx, resetSessionCtx, clearTerminalCtx } from './lib/appContext'
 import ProjectMenu from './components/ProjectMenu'
 import './App.css'
 import './modern.css'
@@ -73,7 +73,7 @@ import { startCheckout, redirectToCheckout } from './lib/paystack'
 import GitHubModal from './components/GitHubModal'
 import ActionsModal from './components/ActionsModal'
 import DesktopUpdater from './components/DesktopUpdater'
-import { saveToDisk, saveAllToDisk, chooseFolder, linkedFolder, canPickFolder, noteLayout, setDirectFolder } from './lib/diskSave'
+import { saveToDisk, saveAllToDisk, chooseFolder, linkedFolder, canPickFolder, noteLayout, setDirectFolder, workspaceOn } from './lib/diskSave'
 
 function AppInner() {
   const { user, loading: authLoading } = useAuth()
@@ -421,6 +421,8 @@ const [showLogin, setShowLogin] = useState(false)
     return () => ts.forEach(clearTimeout)
   }, [bottomOpen])
   useEffect(() => { resetSessionCtx() }, [activeSession?.id])
+  // first launch of the desktop app: pick the one folder where all your projects live
+  const [askWorkspace, setAskWorkspace] = useState(() => !!(typeof window !== 'undefined' && window.desktop?.isDesktop && !workspaceOn()))
   const planInfo = usePlan()
   useEffect(() => { if (fullAccess && planInfo.loaded && !planInfo.can('fullAccess')) toggleFullAccess(false) }, [planInfo.plan, planInfo.loaded, fullAccess])
   useEffect(() => {
@@ -554,12 +556,16 @@ const [showLogin, setShowLogin] = useState(false)
     cmdBusy.current = true
     cmdAnyTest.current = cmdAnyTest.current || !!next.test
     addActivity([{ kind: 'terminal', title: `Running on your computer: ${next.command}`, detail: next.message || '' }])
+    clearTerminalCtx() // the AI only reads what THIS command prints, not older errors
     window.__qodersPendingRun = { cmd: next.command, test: !!next.test }
     setBottomOpen(true)
     window.dispatchEvent(new CustomEvent('qoders-open-terminal'))
     window.dispatchEvent(new CustomEvent('qoders-run', { detail: window.__qodersPendingRun }))
   }
-  const enqueueCommands = (list) => {
+  // "a && b && c" becomes three simple commands, run one after another (each waits for the one before)
+  const splitChain = (c) => String(c.command).split(/\s*&&\s*/).map((x) => x.trim()).filter(Boolean).map((x) => ({ ...c, command: x }))
+  const enqueueCommands = (list0) => {
+    const list = list0.flatMap(splitChain)
     if (!list.length) return
     if (!cmdBusy.current && !cmdQueue.current.length) { cmdResults.current = []; cmdAnyTest.current = false }
     // an install that already worked, with the same package.json, is not run again
@@ -1057,6 +1063,8 @@ const saveActive = () => {
 
   useEffect(() => {
     const handler = (e) => {
+      // Ctrl+Shift+L saves the whole project to its folder (same files rewritten in place)
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'l') { e.preventDefault(); diskRef.current.diskSaveAll(); return }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
         if (e.shiftKey) { diskRef.current.diskSaveAll(); return }
@@ -2335,6 +2343,20 @@ case 'importZip': setShowImport(true); break
 
       {toast && <div className={`toast toast-${toast.kind}`}>{toast.msg}</div>}
 
+      {askWorkspace && (
+        <div className="modal-backdrop" style={{ zIndex: 9999 }}>
+          <div className="modal" style={{ maxWidth: 440, padding: 22 }}>
+            <div className="modal-title" style={{ fontSize: 17, marginBottom: 8 }}>Where should your projects live?</div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.55, opacity: 0.85, marginBottom: 16 }}>
+              Pick one folder on your computer. Every project you make gets its own folder inside it, next to your other projects, so nothing is ever nested inside another project.
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button className="topbar-btn" onClick={() => setAskWorkspace(false)}>Later</button>
+              <button className="action-btn" onClick={async () => { const r = await chooseFolder(); if (r) { setAskWorkspace(false); linkedFolder(activeSession.id).then(setDiskFolder) } }}>Choose folder</button>
+            </div>
+          </div>
+        </div>
+      )}
       {showLogin && (
         <LoginModal onClose={() => setShowLogin(false)} />
       )}
