@@ -1244,3 +1244,10 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .menu-up .model-menu { max-height: min(48vh, 360px); }
 .model-menu { max-height: min(55vh, 420px); }
 @media (max-height: 760px) { .menu-up .model-menu { max-height: 40vh; } }
+
+/* small plain typing dots (no box) */
+.typing-dots { display: inline-flex; gap: 4px; align-items: center; height: 14px; padding: 0; background: none; border: 0; }
+.typing-dots i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .35; animation: tdot 1.6s ease-in-out infinite; }
+.typing-dots i:nth-child(2) { animation-delay: .25s }
+.typing-dots i:nth-child(3) { animation-delay: .5s }
+@keyframes tdot { 0%,70%,100% { opacity: .3; transform: translateY(0) } 35% { opacity: .9; transform: translateY(-2px) } }
