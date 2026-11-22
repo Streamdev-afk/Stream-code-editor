@@ -1239,3 +1239,8 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .byok-item:hover { background: rgba(255,255,255,.06); }
 .byok-item.on { background: rgba(124,156,255,.18); }
 .byok-item em { font-style: normal; font-size: 10.5px; color: #3ecf8e; }
+
+/* the model list opens upward from the bottom of the chat: keep it short enough to stay fully on screen */
+.menu-up .model-menu { max-height: min(48vh, 360px); }
+.model-menu { max-height: min(55vh, 420px); }
+@media (max-height: 760px) { .menu-up .model-menu { max-height: 40vh; } }
