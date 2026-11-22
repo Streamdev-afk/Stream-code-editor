@@ -1372,3 +1372,24 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .secret-row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--bg-elev, rgba(255,255,255,.05)); font-size: 12.5px; }
 .secret-row code { flex: 1; } .secret-row span { color: var(--text-dim); letter-spacing: 2px; } .secret-row button { border: 0; background: transparent; color: var(--text-dim); cursor: pointer; font-size: 16px; }
 .secret-add { display: flex; gap: 6px; } .secret-add .gh-input { flex: 1; min-width: 0; }
+
+/* ===== scroll safety net: every modal and side panel scrolls, headers stay put ===== */
+.modal-backdrop { overflow-y: auto; overscroll-behavior: contain; }
+.modal { max-height: min(88vh, calc(100dvh - 32px)); }
+.modal > .modal-header, .modal > .modal-footer { flex: none; }
+.modal-body, .modal-body-simple, .login-modal-body, .offer-body, .team-body, .m-body, .planning-body, .gh-modal-body {
+  min-height: 0; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+}
+.modal > .modal-body, .modal > .modal-body-simple, .modal > .login-modal-body, .modal > .offer-body, .modal > .team-body, .modal > .m-body { flex: 1 1 auto; }
+.history-panel, .search-panel, .outline-panel, .sc-panel { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.history-list, .search-results, .outline-list, .sc-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.sidebar-panel { overflow: hidden; }
+.model-menu, .thinking-menu, .behavior-menu { overflow-y: auto; overscroll-behavior: contain; }
+.problems-list, .console-output { overflow-y: auto; overscroll-behavior: contain; }
+.term-tabs { scrollbar-width: none; }
+@media (max-width: 700px) {
+  .modal-backdrop { padding: 10px; align-items: flex-start; }
+  .modal { width: 100%; max-height: calc(100dvh - 20px); }
+}
+.ctx-row small { color: var(--text-dim); font-size: 11.5px; }
+.ctx-row .ctx-meter { min-width: 64px; justify-content: center; }

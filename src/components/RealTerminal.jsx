@@ -128,12 +128,11 @@ export default function RealTerminal({ files, onFilesChange, projectId, slot = 0
     fitRef.current = fit
     try { fit.fit() } catch {}
 
-    // copy with Ctrl+C when text is selected, paste with Ctrl+V; otherwise keys go to the shell
+    // copy with Ctrl+C when text is selected; paste (Ctrl+V / right-click) is left to the terminal itself so it is never typed twice
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown') return true
       const mod = e.ctrlKey || e.metaKey
       if (mod && e.key.toLowerCase() === 'c' && term.hasSelection()) { navigator.clipboard.writeText(term.getSelection()).catch(() => {}); return false }
-      if (mod && e.key.toLowerCase() === 'v') { navigator.clipboard.readText().then((t) => window.desktop.ptyWrite(id, t)).catch(() => {}); return false }
       return true
     })
     term.onData((d) => window.desktop.ptyWrite(id, d))
@@ -168,22 +167,17 @@ export default function RealTerminal({ files, onFilesChange, projectId, slot = 0
     const refit = () => {
       const h = hostRef.current
       if (!h || h.clientWidth < 80 || h.clientHeight < 40) return
-      try {
-        fit.fit()
-        window.desktop.ptyResize(id, term.cols, term.rows)
-        term.refresh(0, term.rows - 1)
-      } catch {}
+      try { fit.fit() } catch {} // term.onResize tells the shell, only when the size really changed
     }
     ro = new ResizeObserver(refit)
     ro.observe(hostRef.current)
     window.addEventListener('qoders-relayout', refit)
     window.addEventListener('resize', refit)
-    const vis = setInterval(refit, 1500)
     return () => {
       disposed = true
       offData(); offExit()
       ro?.disconnect()
-      window.removeEventListener('qoders-relayout', refit); window.removeEventListener('resize', refit); clearInterval(vis)
+      window.removeEventListener('qoders-relayout', refit); window.removeEventListener('resize', refit)
       term.dispose()
       termRef.current = null
     }

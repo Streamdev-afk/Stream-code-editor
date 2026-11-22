@@ -60,6 +60,14 @@ export function byokMiddleware(req, res, next) {
 
 const SKIP = new Set(['__fb', 'reasoning_effort', 'reasoning_format', 'tools', 'tool_choice', 'service_tier'])
 
+// one signal that fires when either the given signal aborts or the time runs out
+function linkSignals(sig, ms) {
+  const c = new AbortController()
+  const t = setTimeout(() => c.abort(), ms)
+  sig.addEventListener('abort', () => { clearTimeout(t); c.abort() })
+  return c.signal
+}
+
 // Calls an OpenAI-compatible /chat/completions endpoint. Returns the same shape the
 // Groq SDK gives: an async iterable of chunks when streaming, otherwise the JSON body.
 export async function byokCreate(params, cfg) {
@@ -71,7 +79,7 @@ export async function byokCreate(params, cfg) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders(cfg) },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(300000),
+    signal: cfg.abort ? linkSignals(cfg.abort, 300000) : AbortSignal.timeout(300000),
   })
   if (!res.ok) {
     let msg = ''

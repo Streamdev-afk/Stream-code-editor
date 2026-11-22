@@ -613,7 +613,7 @@ setMessages((m) => {
           <div className="aichat-header-actions">
             <div className="aichat-more-wrap">
               <button className={`aichat-icon-btn ${showMore ? 'active' : ''}`} onClick={() => setShowMore((v) => !v)} title="More options">
-                <Icon name="dots" size={16} />
+                <span style={{ display: 'inline-flex', transform: 'rotate(90deg)' }}><Icon name="dots" size={16} /></span>
               </button>
               {showMore && createPortal(
                 <div className="modal-backdrop" onClick={() => setShowMore(false)}>
@@ -623,6 +623,16 @@ setMessages((m) => {
                       <button className="modal-close" onClick={() => setShowMore(false)} aria-label="Close"><Icon name="close" size={16} /></button>
                     </div>
                     <div className="more-list">
+                      {(() => {
+                        const used = Math.round(((messages || []).reduce((n, m) => n + String(m.text || '').length, 0)) / 4)
+                        const pct = Math.min(100, Math.round((used / 24000) * 100))
+                        return (
+                          <div className="more-row ctx-row" title="When it is nearly full, start a new session so answers stay sharp and cheap.">
+                            <span>Chat memory<small> · about {used.toLocaleString()} of 24,000 tokens</small></span>
+                            <span className={`ctx-meter ${pct > 80 ? 'hot' : pct > 50 ? 'warm' : ''}`}><i style={{ width: pct + '%' }} />{pct}%</span>
+                          </div>
+                        )
+                      })()}
                       {mode === 'agent' && (
                         <label className="more-row">
                           <span>Test after applying</span>
@@ -928,11 +938,6 @@ setMessages((m) => {
           />
           <div className="composer-bar">
             <div className="composer-tools">
-              {(() => {
-                const used = Math.round(((messages || []).reduce((n, m) => n + String(m.text || '').length, 0) + String(input || '').length) / 4)
-                const pct = Math.min(100, Math.round((used / 24000) * 100))
-                return <span className={`ctx-meter ${pct > 80 ? 'hot' : pct > 50 ? 'warm' : ''}`} title={`Chat memory: about ${used.toLocaleString()} tokens of conversation. When it is nearly full, start a new session so answers stay sharp and cheap.`}><i style={{ width: pct + '%' }} />{pct}%</span>
-              })()}
               <button
                 className="composer-icon"
                 title="Attach an image (or paste / drop one)"
