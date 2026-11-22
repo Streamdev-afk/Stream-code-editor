@@ -145,6 +145,13 @@ export default function AIChat({
   }
   const [streaming, setStreaming] = useState(false)
   const sendAgentRef = useRef(null)
+  // the message box grows with what you type (up to about 8 lines), then scrolls inside itself
+  useEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = Math.min(el.scrollHeight, 210) + 'px'
+  }, [input])
   const [crewDone, setCrewDone] = useState([])
   const [cmdBusyUi, setCmdBusyUi] = useState(false)
   useEffect(() => {
@@ -916,7 +923,8 @@ setMessages((m) => {
               }
             }}
             disabled={streaming}
-            rows={2}
+            rows={1}
+            style={{ display: 'block', minHeight: 88, maxHeight: 210, overflowY: 'auto', boxSizing: 'border-box' }}
           />
           <div className="composer-bar">
             <div className="composer-tools">
