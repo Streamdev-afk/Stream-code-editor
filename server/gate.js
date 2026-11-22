@@ -2,6 +2,7 @@
 // so a locked option cannot be used by calling the API directly.
 import { createClient } from '@supabase/supabase-js'
 import { resolveTier } from './usage.js'
+import { entryFor, tierRank } from './catalog.js'
 
 const RANK = { anonymous: 0, free: 0, go: 1, plus: 2, pro3x: 2, pro: 3, pro5x: 3, pro10x: 3, max: 4, max2: 4, max3: 4, max5: 4 }
 const PLAN_RANK = { free: 0, go: 1, plus: 2, pro: 3, max: 4 }
@@ -27,7 +28,11 @@ export async function planGate(req, _res, next) {
     const b = req.body
     if (rank < 1) b.fullAccess = false
     if (rank < 2) b.team = false
-    if (b.model && admin) {
+    if (/^cat::/.test(String(b.model || ''))) {
+      const e = entryFor(b.model)
+      if (!e || tierRank(e.tier) > rank) delete b.model
+      else req.creditWeight = e.cost
+    } else if (b.model && admin) {
       const info = (await modelRanks()).get(b.model)
       if (info && info.rank > rank) delete b.model // falls back to the server's default model
       else if (info) req.creditWeight = info.cost

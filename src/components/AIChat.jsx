@@ -817,7 +817,7 @@ setMessages((m) => {
                 {(msg.text || showTyping || isUser || msg._status || !msg.activity) && (
                 <div className={`chat-text ${msg._status ? 'chat-status' : ''}`}>
                   {showTyping ? (
-                    <AiAnim name="thinking" size={46} />
+                    <span className="typing-dots" aria-label="thinking"><i /><i /><i /></span>
                   ) : (
                     isUser || msg._status
                       ? <>{msg._status && streaming && isLast && <AiAnim name={/run|command|test|install|terminal/i.test(msg.text || '') ? 'running' : 'writing'} size={26} />}{msg.text || (streaming && isLast ? '▍' : '')}</>
@@ -928,6 +928,11 @@ setMessages((m) => {
           />
           <div className="composer-bar">
             <div className="composer-tools">
+              {(() => {
+                const used = Math.round(((messages || []).reduce((n, m) => n + String(m.text || '').length, 0) + String(input || '').length) / 4)
+                const pct = Math.min(100, Math.round((used / 24000) * 100))
+                return <span className={`ctx-meter ${pct > 80 ? 'hot' : pct > 50 ? 'warm' : ''}`} title={`Chat memory: about ${used.toLocaleString()} tokens of conversation. When it is nearly full, start a new session so answers stay sharp and cheap.`}><i style={{ width: pct + '%' }} />{pct}%</span>
+              })()}
               <button
                 className="composer-icon"
                 title="Attach an image (or paste / drop one)"

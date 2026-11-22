@@ -9,6 +9,8 @@ import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
 import { PROVIDERS, getByok, setByok } from '../lib/byok'
 import UsageDropdown from './UsageDropdown'
+import { AVAILABLE_MODELS } from '../lib/settings'
+import { GROUPS, FRONTIER_NOTE, groupOf, useCatalog, dots } from '../lib/modelGroups'
 
 function Row({ label, hint, children }) {
   return (
@@ -135,6 +137,7 @@ function ByokSection() {
 
 const PAGES = [
   { id: 'plan', label: 'Plan & usage', desc: 'Your plan, usage and billing', icon: 'gem' },
+  { id: 'models', label: 'AI models', desc: 'What each model is good at', icon: 'bot' },
   { id: 'ai', label: 'AI assistant', desc: 'Web search, team mode, typing speed', icon: 'bot' },
   { id: 'models', label: 'AI models', desc: 'Use your own API key', icon: 'bolt' },
   { id: 'github', label: 'GitHub & connections', desc: 'Repos, push, pull and ION characters', icon: 'github' },
@@ -149,6 +152,7 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
   const [web, setWebState] = useState(getWeb())
   const [page, setPage] = useState(isMobile ? null : 'plan') // null = the list (phones)
   const [appVersion, setAppVersion] = useState('')
+  const catalog = useCatalog()
   const [updMsg, setUpdMsg] = useState('')
   const seg = (key, opts) => (
     <div className="settings-segment">
@@ -187,6 +191,26 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
         <div className="sp-card"><div className="sp-card-title">Billing</div><BillingPanel onUpgrade={onUpgrade} /></div>
       </>
     ),
+    models: <>
+      {GROUPS.map((g) => (
+        <div className="sp-card" key={g.id}>
+          <div className="sp-card-title">{g.title}</div>
+          <div className="sp-note">{g.sub}</div>
+          {[...catalog, ...AVAILABLE_MODELS].filter((m) => groupOf(m) === g.id).map((m) => (
+            <div className="sp-model" key={m.id}>
+              <div className="sp-model-head"><strong>{m.label}</strong><span className="sp-model-meters">⚡ {dots(m.speed || 3)} &nbsp; 🧠 {dots(m.power || 3)}</span></div>
+              <div className="sp-model-line">✓ {m.best}</div>
+              <div className="sp-model-line dim">Limits: {m.weak}</div>
+            </div>
+          ))}
+        </div>
+      ))}
+      <div className="sp-card">
+        <div className="sp-card-title">Frontier models</div>
+        <div className="sp-note">{FRONTIER_NOTE}</div>
+        <div className="sp-model"><div className="sp-model-line dim">Coming soon. The strongest models for the most demanding work.</div></div>
+      </div>
+    </>,
     ai: <div className="sp-card">
             <Row label="Web search" hint="Let the AI look things up when a question needs it">
               <Toggle value={web} onChange={(v) => { setWeb(v); setWebState(v) }} />
@@ -202,6 +226,12 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
             </Row>
             <Row label="Auto agents" hint="On big jobs (5+ files) one AI per file works at the same time, up to 8. Turn off to use only the Team mode setting.">
               <Toggle value={settings.autoAgents !== false} onChange={(v) => set('autoAgents', v)} />
+            </Row>
+            <Row label="Tab autocomplete" hint="Grey suggestions appear while you type; press Tab to accept. Go plan and up.">
+              <Toggle value={!!settings.autocomplete} onChange={(v) => set('autocomplete', v)} />
+            </Row>
+            <Row label="AI panel side" hint="Put the chat on the left or the right of the editor (also the ⇄ button in the side bar)">
+              {seg('aiSide', [['right', 'Right'], ['left', 'Left']])}
             </Row>
             <Row label="AI nickname" hint="What the AI should be called">
               <input className="sp-input" style={{ width: 160 }} maxLength={24} value={settings.aiName || ''} placeholder="e.g. Nova" onChange={(e) => set('aiName', e.target.value)} />

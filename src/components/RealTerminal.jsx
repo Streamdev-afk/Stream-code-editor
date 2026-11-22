@@ -14,7 +14,7 @@ const cssVar = (name, fallback) => {
 }
 
 // A real terminal: your own shell (PowerShell on Windows, your login shell on Mac and Linux), running on your computer.
-export default function RealTerminal({ files, onFilesChange, projectId }) {
+export default function RealTerminal({ files, onFilesChange, projectId, slot = 0 }) {
   const hostRef = useRef(null)
   const termRef = useRef(null)
   const fitRef = useRef(null)
@@ -27,7 +27,7 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
   const [menu, setMenu] = useState(false)
   const [error, setError] = useState('')
   const [tick, setTick] = useState(0)
-  const id = `pty-${projectId}`
+  const id = slot ? `pty-${projectId}-${slot}` : `pty-${projectId}`
   useEffect(() => { filesRef.current = files }, [files])
 
   const importFromFolder = async (since, limitedToChanged) => {
@@ -99,11 +99,10 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
     const prev = lastProj.current
     lastProj.current = projectId
     if (prev && prev !== projectId && window.desktop?.ptyKill) {
-      const old = `pty-${prev}`
+      const old = slot ? `pty-${prev}-${slot}` : `pty-${prev}`
       try { window.desktop.ptyWrite(old, '\x03') } catch { /* ignore */ }
       setTimeout(() => { try { window.desktop.ptyKill(old) } catch { /* ignore */ } }, 400)
-      window.__qodersLocalUrl = ''
-      window.dispatchEvent(new CustomEvent('qoders-local-url-clear'))
+      if (!slot) { window.__qodersLocalUrl = ''; window.dispatchEvent(new CustomEvent('qoders-local-url-clear')) }
     }
   }, [projectId])
 
@@ -165,12 +164,26 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
       term.focus()
     })()
 
-    ro = new ResizeObserver(() => { try { fit.fit() } catch {} })
+    // a hidden terminal measures 0x0: never resize to that (it squeezed the prompt to a few letters). Fit again when it is visible.
+    const refit = () => {
+      const h = hostRef.current
+      if (!h || h.clientWidth < 80 || h.clientHeight < 40) return
+      try {
+        fit.fit()
+        window.desktop.ptyResize(id, term.cols, term.rows)
+        term.refresh(0, term.rows - 1)
+      } catch {}
+    }
+    ro = new ResizeObserver(refit)
     ro.observe(hostRef.current)
+    window.addEventListener('qoders-relayout', refit)
+    window.addEventListener('resize', refit)
+    const vis = setInterval(refit, 1500)
     return () => {
       disposed = true
       offData(); offExit()
       ro?.disconnect()
+      window.removeEventListener('qoders-relayout', refit); window.removeEventListener('resize', refit); clearInterval(vis)
       term.dispose()
       termRef.current = null
     }
@@ -198,6 +211,7 @@ export default function RealTerminal({ files, onFilesChange, projectId }) {
       const cmdText = sh.includes('powershell') ? d.cmd.replace(/\s*&&\s*/g, '; ') : d.cmd
       window.desktop.ptyWrite(id, `${cmdText}${done}\r`)
     }
+    if (slot) return // extra terminals are for you; the AI always uses terminal 1
     const pendingRun = window.__qodersPendingRun
     if (pendingRun) { window.__qodersPendingRun = null; go(pendingRun) }
     const h = (e) => go(e.detail)

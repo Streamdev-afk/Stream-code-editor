@@ -1,9 +1,41 @@
-import { useRef, useEffect, useImperativeHandle, forwardRef } from 'react'
+import { useRef, useEffect, useState, useImperativeHandle, forwardRef } from 'react'
 import MonacoEditor, { loader } from '@monaco-editor/react'
 import * as monaco from 'monaco-editor'
 import '../lib/monacoWorkers.js'
 
+import { apiFetch } from '../lib/supabase'
+import { API_BASE } from '../lib/api'
+
 loader.config({ monaco })
+
+// Tab autocomplete (Go plan and up, switched on in Settings): one provider for every editor
+let acRegistered = false
+function registerAutocomplete(monacoNs) {
+  if (acRegistered) return
+  acRegistered = true
+  monacoNs.languages.registerInlineCompletionsProvider({ pattern: '**' }, {
+    async provideInlineCompletions(model, position, _ctx, token) {
+      if (!window.__qodersAC) return { items: [] }
+      await new Promise((r) => setTimeout(r, 450))
+      if (token.isCancellationRequested) return { items: [] }
+      const last = model.getLineCount()
+      const prefix = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column })
+      const suffix = model.getValueInRange({ startLineNumber: position.lineNumber, startColumn: position.column, endLineNumber: last, endColumn: model.getLineMaxColumn(last) })
+      if (prefix.trim().length < 3) return { items: [] }
+      try {
+        const ctl = new AbortController()
+        token.onCancellationRequested(() => ctl.abort())
+        const r = await apiFetch(`${API_BASE}/api/complete`, { method: 'POST', body: JSON.stringify({ prefix, suffix, language: model.getLanguageId() }), signal: ctl.signal })
+        if (!r.ok) return { items: [] }
+        const j = await r.json()
+        if (!j.text) return { items: [] }
+        return { items: [{ insertText: j.text, range: new monacoNs.Range(position.lineNumber, position.column, position.lineNumber, position.column) }] }
+      } catch { return { items: [] } }
+    },
+    freeInlineCompletions() {},
+    disposeInlineCompletions() {},
+  })
+}
 
 
 const DEFAULT_CODE = `// Welcome to ION Qoders
@@ -18,10 +50,11 @@ console.log(greet('world'))
 `
 
 const Editor = forwardRef(function Editor(
-  { code, setCode, language = 'javascript', settings, mobile = false },
+  { code, setCode, language = 'javascript', settings, mobile = false, secondary = false },
   ref
 ) {
   const editorRef = useRef(null)
+  const [inline, setInline] = useState(null) // Ctrl+I: ask the AI to change the selection or the current line
   // re-measure after the layout around the editor changes (terminal panel shown or hidden)
   useEffect(() => {
     const h = () => { try { editorRef.current?.layout() } catch { /* ignore */ } }
@@ -130,6 +163,7 @@ const Editor = forwardRef(function Editor(
   const handleMount = (editor, monaco) => {
     editorRef.current = editor
     monacoRef.current = monaco
+    registerAutocomplete(monaco)
 
     // Initial theme
     defineTheme(monaco, '#10b981', '#10b98133')
@@ -142,9 +176,51 @@ const Editor = forwardRef(function Editor(
     }
     window.addEventListener('stream-theme-change', onThemeChange)
 
+    // live info for the status bar + Problems panel
+    const emitInfo = () => {
+      const p = editor.getPosition(); const m = editor.getModel(); if (!p || !m) return
+      const sel = editor.getSelection()
+      window.dispatchEvent(new CustomEvent('qoders-editor-info', { detail: { line: p.lineNumber, col: p.column, selChars: sel && !sel.isEmpty() ? m.getValueInRange(sel).length : 0, tab: m.getOptions().tabSize, eol: m.getEOL() === '\r\n' ? 'CRLF' : 'LF' } }))
+    }
+    const emitMarkers = () => {
+      try {
+        const m = editor.getModel(); if (!m) return
+        const list = monaco.editor.getModelMarkers({ resource: m.uri }).filter((x) => x.severity >= 4).map((x) => ({ line: x.startLineNumber, col: x.startColumn, msg: x.message, sev: x.severity >= 8 ? 'error' : 'warn', src: m.getLineContent(x.startLineNumber) }))
+        window.__qodersProblems = list
+        window.dispatchEvent(new CustomEvent('qoders-problems', { detail: list }))
+      } catch {}
+    }
+    const goto = (e) => {
+      const { line = 1, col = 1 } = e.detail || {}
+      editor.revealLineInCenter(line); editor.setPosition({ lineNumber: line, column: col }); editor.focus()
+    }
+    if (!secondary) window.addEventListener('qoders-goto', goto)
+    const d1 = editor.onDidChangeCursorPosition(() => { if (!secondary) emitInfo() })
+    const d2 = editor.onDidChangeModel(() => { if (!secondary) { emitInfo(); emitMarkers() } })
+    const d3 = monaco.editor.onDidChangeMarkers(() => { if (!secondary) emitMarkers() })
+    if (!secondary) editor.addAction({
+      id: 'inline-edit',
+      label: '✦ Edit with AI (Ctrl+I)',
+      keybindings: [monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyI],
+      contextMenuGroupId: 'ai',
+      contextMenuOrder: 0,
+      run: (ed) => {
+        const m = ed.getModel(); const sel = ed.getSelection()
+        let text = m.getValueInRange(sel)
+        if (!text.trim()) text = m.getLineContent(sel.positionLineNumber)
+        if (!text.trim()) return
+        const pos = ed.getScrolledVisiblePosition(ed.getPosition())
+        const r = ed.getDomNode().getBoundingClientRect()
+        setInline({ x: r.left + (pos?.left || 40), y: r.top + (pos?.top || 40) + 24, sel: text })
+      },
+    })
+    if (!secondary) emitInfo(); if (!secondary) emitMarkers()
+
     // Cleanup when unmount
     editor.onDidDispose(() => {
       window.removeEventListener('stream-theme-change', onThemeChange)
+      window.removeEventListener('qoders-goto', goto)
+      d1.dispose(); d2.dispose(); d3.dispose()
     })
 
     // Right-click context menu actions
@@ -204,6 +280,25 @@ const Editor = forwardRef(function Editor(
   }
 
   return (
+    <>
+    {inline && (
+      <div className="inline-edit" style={{ left: Math.max(8, Math.min(inline.x, window.innerWidth - 420)), top: Math.max(8, Math.min(inline.y, window.innerHeight - 90)) }}>
+        <span className="inline-edit-star">✦</span>
+        <input
+          autoFocus
+          placeholder="What should change here? Enter to send, Esc to close"
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') { setInline(null); editorRef.current?.focus() }
+            if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+              const instruction = e.currentTarget.value.trim()
+              window.dispatchEvent(new CustomEvent('ai-action', { detail: { action: 'selection', instruction, selection: inline.sel } }))
+              setInline(null)
+            }
+          }}
+          onBlur={() => setTimeout(() => setInline(null), 150)}
+        />
+      </div>
+    )}
     <MonacoEditor
       height="100%"
       defaultLanguage={language}
@@ -235,6 +330,7 @@ const Editor = forwardRef(function Editor(
         automaticLayout: true,
         tabSize: settings?.tabSize ?? 2,
         wordWrap: settings?.wordWrap === false && !mobile ? 'off' : 'on',
+        stickyScroll: { enabled: settings?.stickyScroll !== false },
         ...(mobile ? {
           minimap: { enabled: false },
           fontSize: Math.max(14, settings?.fontSize ?? 14),
@@ -260,6 +356,7 @@ const Editor = forwardRef(function Editor(
         } : {}),
       }}
     />
+    </>
   )
 })
 

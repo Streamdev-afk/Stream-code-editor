@@ -9,6 +9,8 @@ import { attachUser } from './auth.js'
 import { byokMiddleware, getByok, byokCreate, byokError, readByok, listModels } from './byok.js'
 import { getIonPlan } from './subscriptions.js'
 import { planGate } from './gate.js'
+import { CATALOG, PROVIDERS, entryFor, resolve, availableCatalog } from './catalog.js'
+import { resolveTier } from './usage.js'
 import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
 // Using your own key never counts against plan limits
 const checkLimit = async (req, c) => (req.byok ? { allowed: true } : _checkLimit(req, c))
@@ -176,13 +178,57 @@ async function fallbackModels(exclude, vision = false) {
 // Free models served through OpenRouter (the key lives in the OPENROUTER_API_KEY setting on this server)
 const OR_BASE = 'https://openrouter.ai/api/v1'
 const isOrModel = (m) => /:free$/.test(String(m || ''))
+// streams one OpenAI-compatible provider; throws if nothing useful arrives (before any text was sent) so the caller can move on
+async function* compatStream(params, cfg, st, ms = 25000) {
+  const ctl = new AbortController()
+  const it = (await byokCreate(params, { ...cfg, abort: ctl.signal }))[Symbol.asyncIterator]()
+  let timer
+  let first = await Promise.race([it.next(), new Promise((r) => { timer = setTimeout(() => r('slow'), ms) })])
+  clearTimeout(timer)
+  if (first === 'slow') { ctl.abort(); throw new Error(`no answer within ${ms / 1000}s`) }
+  while (!first.done) {
+    const d = first.value.choices?.[0]?.delta
+    if (d?.content || d?.tool_calls) st.got = true
+    yield first.value
+    first = await it.next()
+  }
+  if (!st.got) throw new Error('empty reply')
+}
 async function* guardedStream(params) {
+  // catalog models (Fireworks, Cerebras, Together): try each provider that has a key, then fall back to the Groq models below
+  if (!getByok() && /^cat::/.test(String(params.model || ''))) {
+    const e = entryFor(params.model)
+    const st = { got: false }
+    if (e) {
+      const { reasoning_effort, reasoning_format, ...rest } = params
+      for (const p of e.providers) {
+        const real = await resolve(e, p)
+        if (!real) continue
+        try {
+          yield* compatStream({ ...rest, model: real }, { key: process.env[PROVIDERS[p].env], model: real, base: PROVIDERS[p].base }, st)
+          return
+        } catch (err) {
+          if (st.got) throw err
+          console.log(`[ai] ${p}/${real} failed: ${String(err?.message || err).slice(0, 160)}`)
+        }
+      }
+    }
+    const { reasoning_effort, reasoning_format, tools, tool_choice, ...rest2 } = params
+    params = { ...rest2, model: PREFERRED[0] }
+  }
   if (!getByok() && process.env.OPENROUTER_API_KEY && isOrModel(params.model)) {
     let got = false
+    const ctl = new AbortController()
     try {
-      for await (const chunk of await byokCreate(params, { key: process.env.OPENROUTER_API_KEY, model: params.model, base: OR_BASE })) {
+      const it = (await byokCreate(params, { key: process.env.OPENROUTER_API_KEY, model: params.model, base: OR_BASE, abort: ctl.signal }))[Symbol.asyncIterator]()
+      // free models can queue for a long time: if nothing arrives in 20 seconds, move on to a faster model
+      let first = await Promise.race([it.next(), new Promise((r) => setTimeout(() => r('slow'), 20000))])
+      if (first === 'slow') { ctl.abort(); throw new Error('no answer within 20s') }
+      while (!first.done) {
+        const chunk = first.value
         if (chunk.choices?.[0]?.delta?.content) got = true
         yield chunk
+        first = await it.next()
       }
       if (got) return
       console.log(`[ai] empty reply from ${params.model}`)
@@ -259,6 +305,15 @@ async function callGroqWithRetry(params, maxAttempts = 4) {
     try {
       const b0 = getByok()
       if (b0) return await byokCreate(params, b0)
+      if (/^cat::/.test(String(params.model || ''))) {
+        const e = entryFor(params.model)
+        for (const p of e?.providers || []) {
+          const real = await resolve(e, p)
+          if (!real) continue
+          try { const { reasoning_effort, reasoning_format, ...rest } = params; return await byokCreate({ ...rest, model: real }, { key: process.env[PROVIDERS[p].env], model: real, base: PROVIDERS[p].base }) } catch (e2) { console.log(`[ai] ${p} failed: ${String(e2?.message || e2).slice(0, 120)}`) }
+        }
+        params = { ...params, model: PREFERRED[0] }
+      }
       if (!b0 && process.env.OPENROUTER_API_KEY && isOrModel(params.model)) {
         try { return await byokCreate(params, { key: process.env.OPENROUTER_API_KEY, model: params.model, base: OR_BASE }) } catch (e) { params = { ...params, model: 'openai/gpt-oss-20b' } }
       }
@@ -1488,6 +1543,42 @@ app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), asy
 app.post('/api/search', async (req, res) => {
   const results = await webSearch(req.body?.query, Math.min(Number(req.body?.maxResults) || 5, 8))
   res.json({ results })
+})
+
+app.get('/api/models/catalog', async (req, res) => {
+  try { res.json({ models: await availableCatalog() }) } catch { res.json({ models: [] }) }
+})
+
+// Tab autocomplete: a short, fast completion at the cursor. Go plan and up, rate limited, uses a small fast model.
+const acHits = new Map()
+app.post('/api/complete', async (req, res) => {
+  if (!req.isAuth || !req.user?.id) return res.status(401).json({ error: 'Sign in required' })
+  try {
+    const tier = await resolveTier(req)
+    if (tier === 'free' || tier === 'anonymous') return res.status(403).json({ error: 'Autocomplete needs the Go plan or higher' })
+  } catch { return res.status(403).json({ error: 'plan check failed' }) }
+  const now = Date.now()
+  const hits = (acHits.get(req.user.id) || []).filter((t) => now - t < 60000)
+  if (hits.length >= 40) return res.status(429).json({ error: 'slow down' })
+  hits.push(now); acHits.set(req.user.id, hits)
+  const { prefix = '', suffix = '', language = 'code' } = req.body || {}
+  if (typeof prefix !== 'string' || prefix.trim().length < 3) return res.json({ text: '' })
+  try {
+    let out = ''
+    const stream = guardedStream({
+      model: 'llama-3.1-8b-instant',
+      stream: true,
+      temperature: 0.1,
+      max_tokens: 96,
+      messages: [
+        { role: 'system', content: `You are an inline code completion engine for ${String(language).slice(0, 20)}. Continue the code exactly at the cursor, between <prefix> and <suffix>. Output ONLY the text to insert: no explanation, no markdown fences, no repeating the prefix. Keep it short (the rest of the line, or at most a few lines). If nothing sensible, output nothing.` },
+        { role: 'user', content: `<prefix>\n${prefix.slice(-1800)}\n</prefix>\n<suffix>\n${String(suffix).slice(0, 600)}\n</suffix>` },
+      ],
+    })
+    for await (const c of stream) { out += c.choices?.[0]?.delta?.content || ''; if (out.length > 500) break }
+    out = out.replace(/^```[a-z]*\n?/i, '').replace(/\n?```$/, '')
+    res.json({ text: out.trimEnd() })
+  } catch { res.json({ text: '' }) }
 })
 
 app.get('/api/health', (req, res) => {

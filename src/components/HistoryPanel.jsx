@@ -1,6 +1,6 @@
 import Icon from './Icon'
 import { stripMd } from './RichText'
-export default function HistoryPanel({ history, onRestore, onClear }) {
+export default function HistoryPanel({ history, onRestore, onRewind, onClear }) {
   if (history.length === 0) {
     return (
       <div className="history-panel">
@@ -64,6 +64,9 @@ export default function HistoryPanel({ history, onRestore, onClear }) {
                 <span className={`history-kind kind-${entry.kind}`}>{kindLabel(entry.kind)}</span>
                 <span className="history-time">{fmtTime(entry.time)}</span>
               </div>
+              {onRewind && (
+                <button className="history-rewind" onClick={(e) => { e.stopPropagation(); if (confirm(`Rewind the project to just before "${entry.label}"? This undoes this change and everything after it.`)) onRewind(entry) }} title="Undo this change and everything that came after it">⟲ Rewind to before this</button>
+              )}
               <div className="history-files">
                 {files.slice(0, 3).map((p) => (
                   <div key={p} className="history-file">{p}</div>

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Icon from './Icon'
 import MinPill from './MinPill'
+import { commandRisk } from '../lib/risk'
 
 const INFO = {
   github_push: { icon: 'push', title: 'Push project to GitHub', note: 'Opens the push window. Nothing is sent until you confirm there.' },
@@ -44,6 +45,7 @@ export default function ActionCard({ actions, onApprove, onDismiss, canRun = fal
             </div>
             {a.type === 'run_command' ? (
               <>
+                {(() => { const r = commandRisk(a.command); return <span className={`risk-badge risk-${r.level}`} title={r.why}>{r.label}</span> })()}
                 <code className="action-cmd">{a.command}</code>
                 <button className="action-btn ghost" onClick={() => onDismiss(a)} title="Cancel. You can run it yourself.">No</button>
                 {canRun ? (

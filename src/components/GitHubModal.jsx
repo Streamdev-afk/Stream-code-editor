@@ -80,6 +80,8 @@ export default function GitHubModal({ mode = 'push', files, sessionTitle, onClos
         commitMessage: commitMsg.trim(),
       })
       setSuccess(result)
+      try { localStorage.setItem('qoders-lastrepo', `${result.owner}/${result.repo}`) } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('qoders-pushed', { detail: result }))
       try {
         const full = `${result.owner}/${result.repo}`
         const next = [full, ...readLinks().filter((x) => x !== full)].slice(0, 6)

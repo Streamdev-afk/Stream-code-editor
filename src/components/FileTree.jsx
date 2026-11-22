@@ -92,6 +92,7 @@ function TreeNode({
         ) : (
           <span className="tree-name">{node.name}</span>
         )}
+        {!isFolder && window.__qodersGit?.[node.path] && <span className={`git-badge g-${window.__qodersGit[node.path]}`}>{window.__qodersGit[node.path]}</span>}
         {hover && !isRenaming && (
           <span className="tree-hover-actions">
             {isFolder && (

@@ -34,6 +34,10 @@ import SettingsModal from './components/SettingsModal'
 import { loadSettings, saveSettings } from './lib/settings'
 import { applyTheme } from './lib/theme'
 import HistoryPanel from './components/HistoryPanel'
+import Outline from './components/Outline'
+import SourceControl from './components/SourceControl'
+import DeployModal from './components/DeployModal'
+import { ensureBaseline, resetBaseline, diffFiles } from './lib/baseline'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
 import { syncPreview, getPreviewUrl, getSessionId } from './lib/previewSession'
@@ -276,6 +280,16 @@ function AppInner() {
 
   const [dirty, setDirty] = useState(new Set())
   const [bottomOpen, setBottomOpen] = useState(true)
+  const [edInfo, setEdInfo] = useState(null)
+  const [splitFile, setSplitFile] = useState(null) // second editor beside the main one
+  const [showDeploy, setShowDeploy] = useState(false)
+  const [probCount, setProbCount] = useState({ e: 0, w: 0 })
+  useEffect(() => {
+    const a = (e) => setEdInfo(e.detail)
+    const b = (e) => { const l = e.detail || []; setProbCount({ e: l.filter((x) => x.sev === 'error').length, w: l.filter((x) => x.sev !== 'error').length }) }
+    window.addEventListener('qoders-editor-info', a); window.addEventListener('qoders-problems', b)
+    return () => { window.removeEventListener('qoders-editor-info', a); window.removeEventListener('qoders-problems', b) }
+  }, [])
 const [showSidebar, setShowSidebar] = useState(() => localStorage.getItem('stream-sidebar') !== 'false')
 const [showAI, setShowAI] = useState(() => localStorage.getItem('stream-ai') !== 'false')
 const [sidebarTab, setSidebarTab] = useState('explorer') // 'explorer' | 'search' | 'history'
@@ -424,6 +438,18 @@ const [showLogin, setShowLogin] = useState(false)
   // first launch of the desktop app: pick the one folder where all your projects live
   const [askWorkspace, setAskWorkspace] = useState(() => !!(typeof window !== 'undefined' && window.desktop?.isDesktop && !workspaceOn()))
   const planInfo = usePlan()
+  // source control: remember how the project looked at open / last push, so changes can be listed
+  const filesNow = useRef(files)
+  filesNow.current = files
+  useEffect(() => { ensureBaseline(activeSession.id, filesNow.current) }, [activeSession.id])
+  useEffect(() => {
+    const h = () => resetBaseline(activeSession.id, filesNow.current)
+    window.addEventListener('qoders-pushed', h)
+    return () => window.removeEventListener('qoders-pushed', h)
+  }, [activeSession.id])
+  const gitChanges = diffFiles(activeSession.id, files)
+  window.__qodersGit = Object.fromEntries(gitChanges.map((c) => [c.path, c.status]))
+  useEffect(() => { window.__qodersAC = !!settings.autocomplete && planInfo.can('fullAccess') }, [settings.autocomplete, planInfo.plan, planInfo.loaded])
   useEffect(() => { if (fullAccess && planInfo.loaded && !planInfo.can('fullAccess')) toggleFullAccess(false) }, [planInfo.plan, planInfo.loaded, fullAccess])
   useEffect(() => {
     const h = (e) => showToast(String(e.detail || ''), 'info')
@@ -987,6 +1013,12 @@ useEffect(() => {
     setDirty((d) => new Set(d).add(activeFile))
   }
 
+  const updateFileContent = (path, newContent) => {
+    setFiles((f) => ({ ...f, [path]: { ...f[path], content: newContent } }))
+    setDirty((d) => new Set(d).add(path))
+  }
+  const gotoLine = (line) => window.dispatchEvent(new CustomEvent('qoders-goto', { detail: { line, col: 1 } }))
+
   const changeLanguage = (lang) => {
     if (!activeFile) return
     setFiles((f) => ({
@@ -1332,6 +1364,14 @@ const saveActive = () => {
   showToast(`Reverted: ${last.label}`, 'ok')
 }
 
+// go back to how everything was just before this entry: undo it and everything that came after it
+const rewindTo = (entry) => {
+  const i = history.findIndex((h) => h.id === entry.id)
+  if (i < 0) return
+  for (let k = history.length - 1; k >= i; k--) restoreSnapshot(history[k])
+  setHistory((h) => h.slice(0, i))
+  showToast(`Rewound to before: ${entry.label}`, 'ok')
+}
 const restoreSnapshot = (entry) => {
   setFiles((f) => {
     const next = { ...f }
@@ -1734,6 +1774,7 @@ case 'importZip': setShowImport(true); break
       <HistoryPanel
         history={history}
         onRestore={(entry) => { restoreSnapshot(entry); showToast(`Restored: ${entry.label}`, 'ok') }}
+        onRewind={rewindTo}
         onClear={() => setHistory([])}
       />
     }
@@ -1828,7 +1869,7 @@ case 'importZip': setShowImport(true); break
     }
   />
 ) : (
-  <div className="main">
+  <div className={`main ${settings.aiSide === 'left' ? 'ai-left' : ''}`}>
     {showSidebar && (
       <div className="sidebar-wrap">
         <div className="sidebar-tabs">
@@ -1847,7 +1888,23 @@ case 'importZip': setShowImport(true); break
             onClick={() => setSidebarTab('history')}
             title="Version history"
           ><Icon name="clock" size={17} /></button>
+          <button
+            className={`sidebar-tab ${sidebarTab === 'git' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('git')}
+            title="Source control: what changed since the last push"
+          >⎇{gitChanges.length > 0 && <i className="tab-count">{gitChanges.length}</i>}</button>
+          <button
+            className={`sidebar-tab ${sidebarTab === 'outline' ? 'active' : ''}`}
+            onClick={() => setSidebarTab('outline')}
+            title="Outline: functions and sections of this file"
+          >{'{ }'}</button>
+          <button
+            className="sidebar-tab activity-end"
+            onClick={() => setSettings((x) => ({ ...x, aiSide: x.aiSide === 'left' ? 'right' : 'left' }))}
+            title="Move the AI panel to the other side"
+          >⇄</button>
         </div>
+        <div className="sidebar-panel">
         {sidebarTab === 'explorer' && (
           <FileTree
             files={files}
@@ -1870,9 +1927,17 @@ case 'importZip': setShowImport(true); break
               restoreSnapshot(entry)
               showToast(`Restored: ${entry.label}`, 'ok')
             }}
+            onRewind={rewindTo}
             onClear={() => setHistory([])}
           />
         )}
+        {sidebarTab === 'git' && (
+          <SourceControl sessionId={activeSession.id} files={files} onOpen={openFile} onPush={handleGitHubPush} />
+        )}
+        {sidebarTab === 'outline' && (
+          <Outline code={activeContent} path={activeFile} onGoto={gotoLine} />
+        )}
+        </div>
       </div>
     )}
     <div className="editor-pane">
@@ -1885,16 +1950,37 @@ case 'importZip': setShowImport(true); break
             dirty={dirty}
             onTabClick={setActiveFile}
             onTabClose={closeTab}
-              rightSlot={aiActionsSlot}
+            onSplit={(p) => setSplitFile((cur) => (cur === p ? null : p))}
+            splitOn={!!splitFile}
+            rightSlot={aiActionsSlot}
           />
+          {activeFile && <div className="breadcrumbs">{activeFile.split('/').map((seg, i, arr) => <span key={i} className={i === arr.length - 1 ? 'bc-last' : ''}>{i > 0 && <i className="bc-sep">›</i>}{seg}</span>)}</div>}
           {activeFile ? (
-            <Editor
-              ref={editorRef}
-              code={activeContent}
-              setCode={updateActiveContent}
-              language={activeLanguage}
-              settings={settings}
-            />
+            <div className="split-wrap">
+              <div className="split-col"><div className="split-fill">
+                <Editor
+                  ref={editorRef}
+                  code={activeContent}
+                  setCode={updateActiveContent}
+                  language={activeLanguage}
+                  settings={settings}
+                />
+              </div></div>
+              {splitFile && files[splitFile] && (
+                <div className="split-col split-side">
+                  <div className="split-head"><span>{splitFile}</span><button onClick={() => setSplitFile(null)} title="Close the side editor">×</button></div>
+                  <div className="split-body"><div className="split-fill">
+                    <Editor
+                      secondary
+                      code={files[splitFile].content}
+                      setCode={(v) => updateFileContent(splitFile, v)}
+                      language={files[splitFile].language || getLanguageFromPath(splitFile)}
+                      settings={settings}
+                    />
+                  </div></div>
+                </div>
+              )}
+            </div>
           ) : (
             <div className="empty-editor">Open a file from the explorer →</div>
           )}
@@ -2213,6 +2299,15 @@ case 'importZip': setShowImport(true); break
         <div className="status-item">
           <LanguageSelect value={activeLanguage} onChange={changeLanguage} />
         </div>
+        <button className="status-btn" onClick={() => { setBottomOpen(true); window.dispatchEvent(new CustomEvent('qoders-open-problems')) }} title="Problems in this file">
+          ✕ {probCount.e} &nbsp;⚠ {probCount.w}
+        </button>
+        {edInfo && activeFile && <>
+          <div className="status-item">Ln {edInfo.line}, Col {edInfo.col}{edInfo.selChars ? ` (${edInfo.selChars} selected)` : ''}</div>
+          <div className="status-item">Spaces: {edInfo.tab}</div>
+          <div className="status-item">UTF-8</div>
+          <div className="status-item">{edInfo.eol}</div>
+        </>}
         <div className="status-item">
           {dirty.has(activeFile) ? 'Unsaved' : 'Saved'}
         </div>
@@ -2239,6 +2334,9 @@ case 'importZip': setShowImport(true); break
         >
           <Icon name="pull" size={13} /> Import
         </button>
+        <button className="status-btn" onClick={() => setShowDeploy(true)} title="Put this project online and keep secrets">
+          <Icon name="push" size={13} /> Deploy
+        </button>
         <button
           className="status-btn"
           onClick={() => setShowActions(true)}
@@ -2247,6 +2345,8 @@ case 'importZip': setShowImport(true); break
           <Icon name="play" size={13} /> Actions
         </button>
       </div>}
+
+      {showDeploy && <DeployModal sessionId={activeSession.id} onClose={() => setShowDeploy(false)} onPush={() => { setShowDeploy(false); handleGitHubPush() }} />}
 
       {pendingDiff && (
         <DiffModal
