@@ -14,6 +14,7 @@ import { apiFetch } from './supabase'
 import { loadActivePersona } from './team'
 import { createShell, runCommand, isReadOnlyCommand } from './shell'
 import { remapOps } from './ops'
+import { contextForQuery, chunkText } from './codeindex'
 
 export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
   const res = await apiFetch(`${API_BASE}/api/edit`, {
@@ -94,8 +95,12 @@ function runForAI(shell, cmd) {
 }
 
 function trimObservations(obs) {
-  const size = () => obs.reduce((n, o) => n + o.cmd.length + o.output.length, 0)
-  while (size() > MAX_OBSERVATION_CHARS && obs.length > 1) obs.shift()
+  const size = () => obs.reduce((n, o) => (o.pinned ? n : n + o.cmd.length + o.output.length), 0)
+  while (size() > MAX_OBSERVATION_CHARS) {
+    const i = obs.findIndex((o) => !o.pinned)
+    if (i < 0 || obs.filter((o) => !o.pinned).length <= 1) break
+    obs.splice(i, 1)
+  }
 }
 
 // True when the user only wants NEW files/folders/pages made (not existing code changed).
@@ -216,6 +221,14 @@ async function runExplorable(path, args, onChunk, onStatus, kind) {
   const observations = []
   const index = buildIndex(files)
   let turn = null
+  // codebase index: start with the files most relevant to the request already in view
+  try {
+    const ctx = contextForQuery(files, base.prompt || base.originalPrompt || '', base.activeFile || base.currentFile)
+    if (ctx) {
+      const body = `Most relevant files (auto-picked from the whole project):\n\n${ctx.text}\n\nSymbols per file:\n${ctx.map}`
+      chunkText(body).forEach((c, i) => observations.push({ cmd: `codebase index (${i + 1})`, output: c, pinned: true }))
+    }
+  } catch { /* index is optional */ }
 
   for (let round = 0; round <= MAX_SHELL_ROUNDS; round++) {
     const lastRound = round === MAX_SHELL_ROUNDS
