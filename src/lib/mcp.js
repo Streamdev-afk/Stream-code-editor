@@ -23,10 +23,16 @@ const post = async (path, body) => {
   return j
 }
 
-const headersOf = (s) => (s.auth ? { Authorization: /^(bearer|basic)\s/i.test(s.auth) ? s.auth : `Bearer ${s.auth}` } : {})
+const headersOf = (s) => {
+  const h = {}
+  if (s.auth) h.Authorization = /^(bearer|basic)\s/i.test(s.auth) ? s.auth : `Bearer ${s.auth}`
+  for (const r of s.headers || []) if (r && r.k && r.v) h[String(r.k).trim()] = String(r.v)
+  return h
+}
 
-export async function addServer({ name, url, auth }) {
-  const clean = { name: String(name || '').trim().replace(/[^\w .-]/g, '').slice(0, 40), url: String(url || '').trim(), auth: String(auth || '').trim(), enabled: true, tools: [] }
+export async function addServer({ name, url, auth, headers, storeId }) {
+  const rows = (Array.isArray(headers) ? headers : []).filter((r) => r && String(r.k || '').trim() && String(r.v || '').trim()).slice(0, 4).map((r) => ({ k: String(r.k).trim(), v: String(r.v).trim() }))
+  const clean = { name: String(name || '').trim().replace(/[^\w .-]/g, '').slice(0, 40), url: String(url || '').trim(), auth: String(auth || '').trim(), headers: rows, storeId: storeId || '', enabled: true, tools: [] }
   if (!clean.name || !clean.url) throw new Error('Give it a name and a URL')
   const { tools } = await post('/api/mcp/tools', { url: clean.url, headers: headersOf(clean) })
   clean.tools = tools
