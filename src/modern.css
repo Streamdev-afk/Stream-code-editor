@@ -1408,3 +1408,20 @@ html:not([data-liquid="off"]) .chat-msg { animation: liquid-msg .4s var(--spring
 .aichat-header-row > .panel-grip { margin-right: 4px; }
 .sidebar-tab[draggable="true"] { cursor: pointer; }
 .tab[draggable="true"] { cursor: pointer; }
+
+/* background agents + extensions */
+.agent-input{width:100%;box-sizing:border-box;resize:vertical;min-height:64px;max-height:240px;border-radius:8px;border:1px solid var(--border,#333);background:var(--bg-2,#1e1e1e);color:inherit;padding:8px;font:inherit}
+.agent-row{border:1px solid var(--border,#333);border-radius:10px;padding:10px;margin-top:8px}
+.agent-top{display:flex;gap:8px;align-items:flex-start}
+.agent-dot{width:8px;height:8px;border-radius:50%;margin-top:6px;flex:none;background:#888}
+.agent-running .agent-dot{background:#e0a020;animation:agentPulse 1s infinite}
+.agent-done .agent-dot{background:#3fb950}.agent-error .agent-dot{background:#f85149}
+@keyframes agentPulse{50%{opacity:.3}}
+.agent-sub{font-size:12px;opacity:.7;margin:4px 0 0 16px;word-break:break-word}
+.agent-btns{display:flex;gap:6px;justify-content:flex-end;margin-top:8px;flex-wrap:wrap}
+.agent-err{color:#f85149}
+.mcp-row{border:1px solid var(--border,#333);border-radius:10px;padding:10px;margin-top:8px}
+.mcp-row-top{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.mcp-tools{font-size:12px;opacity:.7;margin-top:6px;word-break:break-word}
+.mcp-form{display:grid;gap:8px;margin-top:10px}
+.mcp-form input{width:100%;box-sizing:border-box}

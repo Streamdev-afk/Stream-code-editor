@@ -38,6 +38,9 @@ import Outline from './components/Outline'
 import SourceControl from './components/SourceControl'
 import { normalizeOrder, normalizeSb, swapIn } from './lib/layout'
 import DeployModal from './components/DeployModal'
+import AgentsModal from './components/AgentsModal'
+import { subscribe as subscribeAgents, runningCount, readyCount } from './lib/agents'
+import { callTool } from './lib/mcp'
 import { ensureBaseline, resetBaseline, diffFiles, changeSummary } from './lib/baseline'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
@@ -284,6 +287,9 @@ function AppInner() {
   const [edInfo, setEdInfo] = useState(null)
   const [splitFile, setSplitFile] = useState(null) // second editor beside the main one
   const [showDeploy, setShowDeploy] = useState(false)
+  const [showAgents, setShowAgents] = useState(false)
+  const [, setAgentTick] = useState(0)
+  useEffect(() => subscribeAgents(() => setAgentTick((x) => x + 1)), [])
   const [probCount, setProbCount] = useState({ e: 0, w: 0 })
   useEffect(() => {
     const a = (e) => setEdInfo(e.detail)
@@ -566,13 +572,14 @@ const [showLogin, setShowLogin] = useState(false)
     return () => window.removeEventListener('qoders-stop-all', h)
   })
   useEffect(() => { window.dispatchEvent(new CustomEvent('qoders-cmd-state', { detail: { busy: cmdActive } })) }, [cmdActive])
-  const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'run_preview', 'run_tests', 'run_command']
+  const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'github_deploy', 'mcp_call', 'run_preview', 'run_tests', 'run_command']
   const queueAiActions = (list) => {
     const clean = (Array.isArray(list) ? list : [])
       .filter((a) => a && ALLOWED_AI_ACTIONS.includes(a.type))
       .slice(0, 3)
       .filter((a) => a.type !== 'run_command' || (typeof a.command === 'string' && a.command.trim() && !/[\r\n]/.test(a.command.trim())))
-      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), newRepo: !!a.newRepo, command: String(a.command || '').trim().slice(0, 200) }))
+      .map((a) => ({ type: a.type, message: String(a.message || '').slice(0, 140), repo: String(a.repo || '').slice(0, 100), newRepo: !!a.newRepo, command: String(a.command || '').trim().slice(0, 200), server: String(a.server || '').slice(0, 40), tool: String(a.tool || '').slice(0, 80), args: a.args && typeof a.args === 'object' && !Array.isArray(a.args) && JSON.stringify(a.args).length < 4000 ? a.args : {} }))
+      .filter((a) => a.type !== 'mcp_call' || (a.server && a.tool))
     if (fullRef.current) {
       // full access: commands, preview and checks go ahead without asking. GitHub actions still wait for a click.
       const auto = clean.filter((a) => ['run_command', 'run_preview', 'run_tests'].includes(a.type))
@@ -594,7 +601,7 @@ const [showLogin, setShowLogin] = useState(false)
   const runAiActionRef = useRef(null)
   const runAiAction = (a) => {
     setAiActions((list) => list.filter((x) => x !== a))
-    const did = { github_push: ['github', 'Opened the GitHub push window'], github_import: ['github', 'Opened the GitHub import window'], run_preview: ['preview', 'Opened the live preview'], run_tests: ['check', 'Started an error check'] }[a.type]
+    const did = { github_push: ['github', 'Opened the GitHub push window'], github_import: ['github', 'Opened the GitHub import window'], github_deploy: ['github', 'Opened the Deploy window'], run_preview: ['preview', 'Opened the live preview'], run_tests: ['check', 'Started an error check'] }[a.type]
     if (a.type === 'run_command') {
       cmdGoal.current = a.message || cmdGoal.current
       enqueueCommands([{ command: a.command, test: !!a.test, message: a.message }])
@@ -603,6 +610,14 @@ const [showLogin, setShowLogin] = useState(false)
     if (did) addActivity([{ kind: did[0], title: did[1], detail: a.message || a.repo || '' }])
     if (a.type === 'github_push') { setGhHint({ message: a.message, repo: a.repo, newRepo: !!a.newRepo }); handleGitHubPush() }
     else if (a.type === 'github_import') { setGhHint({ repo: a.repo }); handleGitHubPull() }
+    else if (a.type === 'github_deploy') { setShowDeploy(true) }
+    else if (a.type === 'mcp_call') {
+      const label = `${a.server} / ${a.tool}`
+      addActivity([{ kind: 'check', title: `Calling ${label}`, detail: JSON.stringify(a.args || {}).slice(0, 200) }])
+      callTool({ server: a.server, tool: a.tool, args: a.args })
+        .then((r) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: `**${label}** ${r.isError ? 'reported an error' : 'returned'}:\n\n\`\`\`text\n${r.text}\n\`\`\``, time: Date.now() })))
+        .catch((e) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: `The extension call to ${label} failed: ${e.message}`, time: Date.now() })))
+    }
     else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
     else if (a.type === 'run_tests') runTestLoop([], 'Check the project works').catch((e) => setTestProgress({ done: true, status: 'warn', summary: e.message }))
   }
@@ -2390,6 +2405,9 @@ case 'importZip': setShowImport(true); break
         >
           <Icon name="pull" size={13} /> Import
         </button>
+        <button className="status-btn" onClick={() => setShowAgents(true)} title="Background agents: AI tasks that run while you work">
+          <Icon name="bot" size={13} /> Agents{runningCount() + readyCount() > 0 ? ` (${runningCount() ? `${runningCount()} running` : `${readyCount()} ready`})` : ''}
+        </button>
         <button className="status-btn" onClick={() => setShowDeploy(true)} title="Put this project online and keep secrets">
           <Icon name="push" size={13} /> Deploy
         </button>
@@ -2402,6 +2420,7 @@ case 'importZip': setShowImport(true); break
         </button>
       </div>}
 
+      {showAgents && <AgentsModal onClose={() => setShowAgents(false)} getContext={() => ({ files, activeFile, model: settings.model, thinking: settings.thinking || 'medium', behavior: settings.behavior || 'friendly' })} onReview={(plan, prompt) => setPendingPlan({ plan, originalPrompt: prompt })} />}
       {showDeploy && <DeployModal sessionId={activeSession.id} onClose={() => setShowDeploy(false)} onPush={() => { setShowDeploy(false); handleGitHubPush() }} />}
 
       {pendingDiff && (

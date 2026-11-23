@@ -5,6 +5,8 @@ import { commandRisk } from '../lib/risk'
 
 const INFO = {
   github_push: { icon: 'push', title: 'Push project to GitHub', note: 'Opens the push window. Nothing is sent until you confirm there.' },
+  github_deploy: { icon: 'push', title: 'Deploy the project', note: 'Opens the Deploy window with hosting links. Nothing is sent until you choose.' },
+  mcp_call: { icon: 'bolt', title: 'Use an extension tool', note: 'Calls the tool once and shows the result in the chat.' },
   github_import: { icon: 'pull', title: 'Import from GitHub', note: 'Opens the import window. You pick the repo and confirm.' },
   run_preview: { icon: 'play', title: 'Run the live preview', note: 'Switches to the preview.' },
   write_file: { icon: 'filePlus', title: 'Write file', note: 'You will see the exact changes before anything is saved.' },
@@ -40,8 +42,9 @@ export default function ActionCard({ actions, onApprove, onDismiss, canRun = fal
           <div className={`action-row ${a.fromIon ? 'from-ion' : ''}`} key={a.id || i}>
             <span className="action-ico"><Icon name={info.icon} size={16} /></span>
             <div className="action-text">
-              <strong>{info.title}{a.path ? `: ${a.path}` : ''}{a.repo ? `: ${a.repo}` : ''}</strong>
+              <strong>{info.title}{a.path ? `: ${a.path}` : ''}{a.repo ? `: ${a.repo}` : ''}{a.type === 'mcp_call' ? `: ${a.server} / ${a.tool}` : ''}</strong>
               <span>{a.message || info.note}</span>
+              {a.type === 'mcp_call' && <code className="action-cmd">{JSON.stringify(a.args || {}).slice(0, 300)}</code>}
             </div>
             {a.type === 'run_command' ? (
               <>

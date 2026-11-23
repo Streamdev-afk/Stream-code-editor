@@ -40,3 +40,30 @@ export async function planGate(req, _res, next) {
   } catch { /* never block a request because the gate failed */ }
   next()
 }
+
+// Project size limits per plan, so a huge project cannot be sent on a small plan.
+const SIZE_CAP = {
+  anonymous: [60, 400000], free: [60, 400000], go: [200, 1500000], plus: [600, 5000000],
+  pro3x: [600, 5000000], pro: [1500, 15000000], pro5x: [1500, 15000000], pro10x: [1500, 15000000],
+  max: [4000, 40000000], max2: [4000, 40000000], max3: [4000, 40000000], max5: [4000, 40000000],
+}
+export async function projectGate(req, res, next) {
+  try {
+    if (req.method !== 'POST' || !/^\/api\/(chat|edit|agent|plan|step)/.test(req.path) || !req.body || typeof req.body !== 'object') return next()
+    const b = req.body
+    let count = 0
+    let chars = 0
+    if (Array.isArray(b.fileIndex)) {
+      count = b.fileIndex.length
+      for (const f of b.fileIndex) chars += Number(f?.chars) || 0
+    } else if (b.files && typeof b.files === 'object') {
+      for (const f of Object.values(b.files)) { count++; chars += (f && typeof f.content === 'string' ? f.content.length : 0) }
+    } else return next()
+    const tier = await resolveTier(req)
+    const [maxFiles, maxChars] = SIZE_CAP[tier] || SIZE_CAP.free
+    if (count > maxFiles || chars > maxChars) {
+      return res.status(413).json({ error: `This project is bigger than your plan allows (${count} files, ${Math.round(chars / 1000)}k characters; limit ${maxFiles} files, ${Math.round(maxChars / 1000)}k characters). Open a smaller project or upgrade your plan.` })
+    }
+  } catch { /* never block a request because the check failed */ }
+  next()
+}

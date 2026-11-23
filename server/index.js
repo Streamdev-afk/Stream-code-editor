@@ -8,7 +8,8 @@ import * as esbuild from 'esbuild'
 import { attachUser } from './auth.js'
 import { byokMiddleware, getByok, byokCreate, byokError, readByok, listModels } from './byok.js'
 import { getIonPlan } from './subscriptions.js'
-import { planGate } from './gate.js'
+import { planGate, projectGate } from './gate.js'
+import registerMcp from './mcp.js'
 import { CATALOG, PROVIDERS, entryFor, resolve, availableCatalog } from './catalog.js'
 import { resolveTier } from './usage.js'
 import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
@@ -84,6 +85,7 @@ app.use((req, res, next) => {
 app.use(attachUser)
 app.use(byokMiddleware)
 app.use(planGate)
+app.use(projectGate)
 
 // Lists the models a user's own API key can use (so they pick instead of typing)
 app.post('/api/byok/models', async (req, res) => {
@@ -788,6 +790,7 @@ You respond with ONLY a JSON object:
 - github_import: the user wants to import a GitHub repo (opens the import dialog); optional "repo": "owner/name" (only if the user named it)
 - run_preview: the user wants to see the project running (opens the live preview)
 - run_tests: the user wants the project checked for errors
+- github_deploy: the user asked to deploy, publish or put the project online (opens the Deploy window with hosting links after a push). "message" = a short note
 - run_command: a terminal command the project needs to work, for example npm install, npm run dev, npx something, python script.py. Put the exact command in "command" (one line) and why in "message". The user chooses: run it and test, just run it, or cancel and run it themselves. Use it ONLY when the user asked you to run, install, start or test something. If they did not ask, never add a run_command: write the commands they would need as a short copyable code block at the end of your message ("To run it: ...") and stop. Never claim it ran.
 When the user asks you to run something (install, start, test, a script, adb), do NOT write a README or a how-to file: answer with a run_command action holding the exact command. When the user says a command failed or to look at the terminal, read the Terminal part of RECENT LOGS in the app context, name the cause in one or two sentences, fix the files if the fix is in the project, and propose the corrected run_command. Never claim you ran it yourself.
 Never say you pushed, imported or ran something. Say it is waiting for their approval. If the user only asks for these actions, "operations" can be an empty list.
@@ -879,6 +882,10 @@ function rulesBlock(req, lite) {
   let out = r ? `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}` : ''
   const mem = clip(b.memoryContext, 4500)
   if (mem) out += `\n\n${mem}`
+  if (Array.isArray(b.mcp) && b.mcp.length) {
+    const lines = b.mcp.slice(0, 40).map((t) => `- ${clip(String(t.server), 40)} / ${clip(String(t.name), 80)}(${clip(String(t.schema), 200)}${Array.isArray(t.required) && t.required.length ? `; required: ${t.required.slice(0, 8).map((x) => clip(String(x), 40)).join(', ')}` : ''}): ${clip(String(t.description), 200)}`)
+    out += `\n\n## CONNECTED TOOLS (MCP extensions the user added)\nYou may propose using these with an "mcp_call" action: {"type":"mcp_call","server":"<server>","tool":"<tool>","args":{...},"message":"why"}. The user approves each call and the result is shown in the chat. Only use one when it clearly helps the request. Never claim a tool ran.\n${lines.join('\n')}`
+  }
   if (b.fullAccess === true) {
     out += `\n\n## FULL ACCESS MODE (the user is away and trusts you)
 - Nobody will approve anything. Do the whole job yourself and keep going until it works.
@@ -1607,6 +1614,8 @@ app.get('/api/usage', async (req, res) => {
 // START
 // ============================================================
 const PORT = process.env.PORT || 3001
+registerMcp(app)
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Backend running on port ${PORT}`)
   // Keep Render's free tier awake (it sleeps after ~15 min without traffic)

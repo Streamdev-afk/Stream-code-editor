@@ -8,6 +8,7 @@ import { THEMES } from '../lib/settings'
 import BillingPanel from './BillingPanel'
 import GitHubSettings from './GitHubSettings'
 import { PROVIDERS, getByok, setByok } from '../lib/byok'
+import ExtensionsSection from './ExtensionsSection'
 import UsageDropdown from './UsageDropdown'
 import { AVAILABLE_MODELS } from '../lib/settings'
 import { GROUPS, FRONTIER_NOTE, groupOf, useCatalog, dots } from '../lib/modelGroups'
@@ -140,6 +141,7 @@ const PAGES = [
   { id: 'models', label: 'AI models', desc: 'What each model is good at', icon: 'bot' },
   { id: 'ai', label: 'AI assistant', desc: 'Web search, team mode, typing speed', icon: 'bot' },
   { id: 'byok', label: 'Your own API key', desc: 'Use your own key from any provider', icon: 'bolt' },
+  { id: 'extensions', label: 'Extensions (MCP)', desc: 'Give the AI tools from MCP servers', icon: 'bolt' },
   { id: 'github', label: 'GitHub & connections', desc: 'Repos, push, pull and ION characters', icon: 'github' },
   { id: 'editor', label: 'Editor', desc: 'Font, tabs, wrapping and more', icon: 'edit' },
   { id: 'appearance', label: 'Appearance', desc: 'Theme colours and motion', icon: 'star' },
@@ -244,6 +246,7 @@ export default function SettingsModal({ settings, onChange, onClose, onUpgrade, 
               <Toggle value={settings.autoFormat !== false} onChange={(v) => set('autoFormat', v)} />
             </Row></div>,
     byok: <div className="sp-card"><ByokSection /></div>,
+    extensions: <div className="sp-card"><ExtensionsSection /></div>,
     github: (
       <>
         <div className="sp-card"><div className="sp-card-title">GitHub</div><GitHubSettings /></div>
