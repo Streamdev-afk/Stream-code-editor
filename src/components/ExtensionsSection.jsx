@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getServers, addServer, refreshServer, removeServer, setEnabled } from '../lib/mcp'
+import { getServers, addServer, refreshServer, removeServer, setEnabled, oauthSignIn, reconnect } from '../lib/mcp'
 import { STORE } from '../lib/extStore'
 
 const initials = (n) => String(n || '?').trim().slice(0, 2).toUpperCase()
@@ -21,11 +21,17 @@ function AddForm({ initial, onDone, onBack }) {
   const [headers, setHeaders] = useState(initial?.headers?.length ? initial.headers : [])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
+  const [own, setOwn] = useState(false)
+  const [clientId, setClientId] = useState('')
+  const [clientSecret, setClientSecret] = useState('')
   const setRow = (i, patch) => setHeaders((h) => h.map((r, j) => (j === i ? { ...r, ...patch } : r)))
   const submit = async () => {
     setErr(''); setBusy(true)
+    // start the popup right now (inside the click) so the browser does not block it
+    const signIn = mode === 'oauth' ? oauthSignIn({ url: url.trim(), clientId: own ? clientId.trim() : '', clientSecret: own ? clientSecret.trim() : '' }) : null
     try {
-      await addServer({ name, url, headers: mode === 'headers' ? headers : [], storeId: initial?.storeId })
+      const oauth = signIn ? await signIn : null
+      await addServer({ name, url, headers: mode === 'headers' ? headers : [], storeId: initial?.storeId, oauth })
       onDone()
     } catch (e) { setErr(e.message) }
     setBusy(false)
@@ -47,10 +53,31 @@ function AddForm({ initial, onDone, onBack }) {
         <button type="button" className={`ext-radio ${mode === 'headers' ? 'on' : ''}`} onClick={() => { setMode('headers'); if (!headers.length) setHeaders([{ k: 'Authorization', v: '' }]) }}>
           <i /><span><b>API key or token</b><em>Sent as request headers with every call.</em></span>
         </button>
-        <div className="ext-radio off">
-          <i /><span><b>Sign in with OAuth <u>Coming soon</u></b><em>Servers that need an OAuth sign-in are not supported yet.</em></span>
-        </div>
+        <button type="button" className={`ext-radio ${mode === 'oauth' ? 'on' : ''}`} onClick={() => setMode('oauth')}>
+          <i /><span><b>Sign in with OAuth</b><em>You sign in through the server's own login window. Works with most servers that need an account.</em></span>
+        </button>
       </div>
+
+      {mode === 'oauth' && (
+        <>
+          <div className="ext-section">OAuth client</div>
+          <div className="ext-radios">
+            <button type="button" className={`ext-radio ${!own ? 'on' : ''}`} onClick={() => setOwn(false)}>
+              <i /><span><b>Register automatically</b><em>This app registers itself with the server when you connect. Works with most servers.</em></span>
+            </button>
+            <button type="button" className={`ext-radio ${own ? 'on' : ''}`} onClick={() => setOwn(true)}>
+              <i /><span><b>Use your own OAuth client</b><em>Enter a client ID you registered with the server. Leave the secret blank unless it needs one.</em></span>
+            </button>
+          </div>
+          {own && (
+            <>
+              <input className="ext-input" placeholder="Client ID" value={clientId} onChange={(e) => setClientId(e.target.value)} autoCapitalize="off" spellCheck={false} />
+              <input className="ext-input" type="password" placeholder="Client secret (optional)" value={clientSecret} onChange={(e) => setClientSecret(e.target.value)} autoComplete="off" />
+            </>
+          )}
+          <div className="ext-hint">A sign-in window will open when you press Add. Your login stays with the server: we only keep the access token in this browser.</div>
+        </>
+      )}
 
       {mode === 'headers' && (
         <>
@@ -76,7 +103,7 @@ function AddForm({ initial, onDone, onBack }) {
       <div className="ext-warn">Only use extensions from developers you trust. A server decides which tools it offers and can change them at any time. The AI can only propose a tool call, and you approve each one.</div>
       {err && <div className="ext-err">{err}</div>}
       <div className="ext-actions">
-        <button type="button" className="ext-btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={submit}>{busy ? 'Connecting…' : 'Add'}</button>
+        <button type="button" className="ext-btn primary" disabled={busy || !name.trim() || !url.trim()} onClick={submit}>{busy ? (mode === 'oauth' ? 'Waiting for sign-in…' : 'Connecting…') : (mode === 'oauth' ? 'Sign in and add' : 'Add')}</button>
         <button type="button" className="ext-btn" onClick={onBack}>Back</button>
       </div>
     </div>
@@ -180,6 +207,7 @@ export default function ExtensionsSection() {
               <div className="ext-tools">{(s.tools || []).length ? s.tools.map((t) => t.name).join(' · ') : 'No tools found'}</div>
               <div className="ext-actions">
                 <button className="ext-btn sm" disabled={busy === s.name} onClick={() => refresh(s.name)}>{busy === s.name ? 'Checking…' : 'Refresh tools'}</button>
+                {s.oauth && <button className="ext-btn sm" disabled={busy === s.name} onClick={async () => { setErr(''); setBusy(s.name); try { await reconnect(s.name, { clientId: s.oauth.clientId, clientSecret: s.oauth.clientSecret }); await refreshServer(s.name) } catch (e) { setErr(`${s.name}: ${e.message}`) } setBusy('') }}>Sign in again</button>}
                 <button className="ext-btn sm danger" onClick={() => removeServer(s.name)}>Remove</button>
               </div>
             </div>

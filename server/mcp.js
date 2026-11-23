@@ -2,6 +2,7 @@
 // (streamable HTTP). The browser keeps the server list; this only forwards calls, with safety checks.
 import dns from 'node:dns/promises'
 import net from 'node:net'
+import crypto from 'node:crypto'
 
 const TIMEOUT = 20000
 const MAX_BYTES = 400000
@@ -100,12 +101,135 @@ function limited(req) {
   return false
 }
 
+
+// ---------- OAuth sign-in for MCP servers (authorization code + PKCE, dynamic client registration) ----------
+async function getJson(raw) {
+  const url = await safeUrl(raw)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 10000)
+  try {
+    const res = await fetch(url, { redirect: 'error', signal: ctrl.signal, headers: { Accept: 'application/json' } })
+    if (!res.ok) return null
+    const text = await res.text()
+    if (text.length > 100000) return null
+    return JSON.parse(text)
+  } catch { return null } finally { clearTimeout(timer) }
+}
+
+async function postForm(raw, data, asJson = false) {
+  const url = await safeUrl(raw)
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), 15000)
+  try {
+    const res = await fetch(url, {
+      method: 'POST', redirect: 'error', signal: ctrl.signal,
+      headers: { 'Content-Type': asJson ? 'application/json' : 'application/x-www-form-urlencoded', Accept: 'application/json' },
+      body: asJson ? JSON.stringify(data) : new URLSearchParams(data).toString(),
+    })
+    const text = (await res.text()).slice(0, 100000)
+    let j = null
+    try { j = JSON.parse(text) } catch { /* not json */ }
+    if (!res.ok) throw new Error(String(j?.error_description || j?.error || `Sign-in server answered HTTP ${res.status}`).slice(0, 300))
+    if (!j) throw new Error('The sign-in server sent an unreadable answer')
+    return j
+  } finally { clearTimeout(timer) }
+}
+
+async function discover(mcpUrl) {
+  const u = new URL(mcpUrl)
+  const path = u.pathname.replace(/\/$/, '')
+  let as = null
+  let resource = u.toString()
+  for (const w of [`${u.origin}/.well-known/oauth-protected-resource${path}`, `${u.origin}/.well-known/oauth-protected-resource`]) {
+    const m = await getJson(w)
+    if (m && Array.isArray(m.authorization_servers) && m.authorization_servers[0]) { as = String(m.authorization_servers[0]); if (m.resource) resource = String(m.resource); break }
+  }
+  if (!as) as = u.origin
+  const a = new URL(as)
+  const apath = a.pathname.replace(/\/$/, '')
+  for (const w of [`${a.origin}/.well-known/oauth-authorization-server${apath}`, `${a.origin}/.well-known/openid-configuration${apath}`, `${as.replace(/\/$/, '')}/.well-known/openid-configuration`]) {
+    const m = await getJson(w)
+    if (m && m.authorization_endpoint && m.token_endpoint) return { meta: m, resource }
+  }
+  throw new Error('This server does not offer OAuth sign-in that we can find')
+}
+
+export function registerOauth(app, guard) {
+  app.post('/api/mcp/oauth/start', async (req, res) => {
+    if (guard(req, res)) return
+    try {
+      const url = await safeUrl(req.body?.url)
+      const redirectUri = String(req.body?.redirectUri || '')
+      if (!/^https?:\/\/[^\s]+\/mcp-callback\.html$/.test(redirectUri)) throw new Error('Bad return address')
+      const { meta, resource } = await discover(url)
+      await safeUrl(meta.authorization_endpoint); await safeUrl(meta.token_endpoint)
+      let clientId = String(req.body?.clientId || '').slice(0, 300)
+      let clientSecret = String(req.body?.clientSecret || '').slice(0, 300)
+      if (!clientId) {
+        if (!meta.registration_endpoint) throw new Error('This server needs you to register your own OAuth client (enter a client ID)')
+        const reg = await postForm(meta.registration_endpoint, {
+          client_name: 'ION Qoders', redirect_uris: [redirectUri], grant_types: ['authorization_code', 'refresh_token'],
+          response_types: ['code'], token_endpoint_auth_method: 'none',
+        }, true)
+        clientId = String(reg.client_id || '')
+        if (!clientId) throw new Error('The server did not register this app')
+      }
+      const verifier = crypto.randomBytes(48).toString('base64url')
+      const challenge = crypto.createHash('sha256').update(verifier).digest('base64url')
+      const state = crypto.randomBytes(16).toString('base64url')
+      const a = new URL(meta.authorization_endpoint)
+      a.searchParams.set('response_type', 'code')
+      a.searchParams.set('client_id', clientId)
+      a.searchParams.set('redirect_uri', redirectUri)
+      a.searchParams.set('code_challenge', challenge)
+      a.searchParams.set('code_challenge_method', 'S256')
+      a.searchParams.set('state', state)
+      a.searchParams.set('resource', resource)
+      if (Array.isArray(meta.scopes_supported) && meta.scopes_supported.length) a.searchParams.set('scope', meta.scopes_supported.slice(0, 20).join(' '))
+      res.json({ authUrl: a.toString(), state, verifier, clientId, clientSecret, tokenEndpoint: meta.token_endpoint, resource, redirectUri })
+    } catch (e) { res.status(400).json({ error: String(e.message || e).slice(0, 300) }) }
+  })
+
+  const tokenOut = (t) => ({
+    access: String(t.access_token || ''),
+    refresh: t.refresh_token ? String(t.refresh_token) : '',
+    exp: Date.now() + Math.max(60, Number(t.expires_in) || 3600) * 1000,
+  })
+
+  app.post('/api/mcp/oauth/token', async (req, res) => {
+    if (guard(req, res)) return
+    try {
+      const b = req.body || {}
+      const data = { grant_type: 'authorization_code', code: String(b.code || ''), redirect_uri: String(b.redirectUri || ''), client_id: String(b.clientId || ''), code_verifier: String(b.verifier || ''), resource: String(b.resource || '') }
+      if (b.clientSecret) data.client_secret = String(b.clientSecret)
+      if (!data.code || !data.client_id || !data.code_verifier) throw new Error('Sign-in was not finished')
+      const t = tokenOut(await postForm(b.tokenEndpoint, data))
+      if (!t.access) throw new Error('The server gave no access token')
+      res.json(t)
+    } catch (e) { res.status(400).json({ error: String(e.message || e).slice(0, 300) }) }
+  })
+
+  app.post('/api/mcp/oauth/refresh', async (req, res) => {
+    if (guard(req, res)) return
+    try {
+      const b = req.body || {}
+      const data = { grant_type: 'refresh_token', refresh_token: String(b.refresh || ''), client_id: String(b.clientId || ''), resource: String(b.resource || '') }
+      if (b.clientSecret) data.client_secret = String(b.clientSecret)
+      if (!data.refresh_token) throw new Error('Sign in again')
+      const t = tokenOut(await postForm(b.tokenEndpoint, data))
+      if (!t.access) throw new Error('The server gave no access token')
+      res.json({ ...t, refresh: t.refresh || data.refresh_token })
+    } catch (e) { res.status(400).json({ error: String(e.message || e).slice(0, 300) }) }
+  })
+}
+
 export default function registerMcp(app) {
   const guard = (req, res) => {
     if (!req.isAuth || !req.user?.id) { res.status(401).json({ error: 'Sign in to use extensions' }); return true }
     if (limited(req)) { res.status(429).json({ error: 'Slow down a little' }); return true }
     return false
   }
+  registerOauth(app, guard)
 
   app.post('/api/mcp/tools', async (req, res) => {
     if (guard(req, res)) return

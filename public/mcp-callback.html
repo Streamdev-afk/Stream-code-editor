@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Signing in…</title>
+<style>body{font-family:system-ui,sans-serif;background:#111;color:#eee;display:grid;place-items:center;height:100vh;margin:0;text-align:center}</style></head>
+<body><div id="m">Finishing sign-in…</div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search)
+  var msg = { type: 'qoders-mcp-oauth', code: q.get('code') || '', state: q.get('state') || '', error: q.get('error_description') || q.get('error') || '' }
+  try { localStorage.setItem('qoders-mcp-oauth-result', JSON.stringify(Object.assign({ at: Date.now() }, msg))) } catch (e) {}
+  try { if (window.opener) window.opener.postMessage(msg, location.origin) } catch (e) {}
+  document.getElementById('m').textContent = msg.error ? 'Sign-in failed: ' + msg.error : 'Signed in. You can close this window.'
+  setTimeout(function () { try { window.close() } catch (e) {} }, 600)
+})()
+</script></body></html>
