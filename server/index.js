@@ -1540,7 +1540,20 @@ app.post('/api/paystack/webhook', express.raw({ type: 'application/json' }), asy
 // ============================================================
 // HEALTH + USAGE
 // ============================================================
+// Web searches have their own daily cap per plan (separate from AI credits). Resets each UTC day.
+const SEARCH_CAP = { anonymous: 3, free: 5, go: 40, plus: 60, pro3x: 60, pro: 250, pro5x: 250, pro10x: 250, max: 1200, max2: 1200, max3: 1200, max5: 1200 }
+const searchUse = new Map()
 app.post('/api/search', async (req, res) => {
+  const who = req.user?.id || req.ip || 'anon'
+  const day = new Date().toISOString().slice(0, 10)
+  let tier = 'anonymous'
+  try { tier = await resolveTier(req) } catch { /* keep anonymous cap */ }
+  const cap = SEARCH_CAP[tier] ?? 5
+  const u = searchUse.get(who)
+  const used = u && u.day === day ? u.n : 0
+  if (used >= cap) return res.status(429).json({ error: `Daily web search limit reached (${cap}). It resets at midnight UTC.`, results: [] })
+  searchUse.set(who, { day, n: used + 1 })
+  if (searchUse.size > 5000) for (const [k, v] of searchUse) if (v.day !== day) searchUse.delete(k)
   const results = await webSearch(req.body?.query, Math.min(Number(req.body?.maxResults) || 5, 8))
   res.json({ results })
 })
