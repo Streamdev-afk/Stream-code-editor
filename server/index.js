@@ -54,6 +54,29 @@ for (const verb of ['post', 'get', 'put', 'delete']) {
   }
 }
 app.set('trust proxy', 1)
+app.disable('x-powered-by')
+
+// Security headers on every answer, and a gentle per-IP request limit against abuse.
+app.use((req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('X-Frame-Options', 'DENY')
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  next()
+})
+const ipHits = new Map()
+app.use('/api', (req, res, next) => {
+  if (req.path === '/paystack/webhook') return next()
+  const now = Date.now()
+  const k = req.ip
+  const arr = (ipHits.get(k) || []).filter((t) => now - t < 60000)
+  if (arr.length >= 600) return res.status(429).json({ error: 'Too many requests. Wait a minute and try again.' })
+  arr.push(now)
+  ipHits.set(k, arr)
+  if (ipHits.size > 20000) for (const [key, v] of ipHits) if (!v.length || now - v[v.length - 1] > 60000) ipHits.delete(key)
+  next()
+})
 
 // Only your own sites may call this API from a browser.
 // Add more (custom domain, preview links) in the ALLOWED_ORIGINS env var, separated by commas.
@@ -1614,6 +1637,15 @@ app.get('/api/usage', async (req, res) => {
 // START
 // ============================================================
 const PORT = process.env.PORT || 3001
+// Last stop for errors: never show internals (stack traces, file paths) to the browser.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err)
+  if (err?.type === 'entity.too.large') return res.status(413).json({ error: 'That request is too big.' })
+  if (err?.type === 'entity.parse.failed') return res.status(400).json({ error: 'Bad request.' })
+  console.error('server error:', err?.message || err)
+  res.status(500).json({ error: 'Something went wrong. Try again.' })
+})
+
 registerMcp(app)
 
 app.listen(PORT, '0.0.0.0', () => {
