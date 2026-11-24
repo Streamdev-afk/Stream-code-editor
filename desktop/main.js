@@ -44,6 +44,8 @@ async function createWindow() {
   Menu.setApplicationMenu(null)
   // links to other sites open in the normal browser
   win.webContents.setWindowOpenHandler(({ url }) => {
+    // the sign-in window for extensions (OAuth) opens blank first and is then pointed at the server's login page
+    if (url === 'about:blank') return { action: 'allow', overrideBrowserWindowOptions: { width: 520, height: 720, autoHideMenuBar: true, webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true } } }
     if (!url.startsWith(`http://localhost:${PORT}`)) { shell.openExternal(url); return { action: 'deny' } }
     return { action: 'allow' }
   })
