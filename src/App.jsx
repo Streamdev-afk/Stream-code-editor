@@ -2439,7 +2439,7 @@ case 'importZip': setShowImport(true); break
           files={files}
           originalPrompt={pendingPlan.originalPrompt}
           onAccept={applyPlan}
-          onReject={() => { if (pendingPlan?.linkActionId) markAction(pendingPlan.linkActionId, 'rejected').catch(() => {}); setPendingPlan(null) }}
+          onReject={() => { if (pendingPlan?.linkActionId) markAction(pendingPlan.linkActionId, 'rejected').catch(() => {}); const ex = String(pendingPlan?.plan?.explanation || '').slice(0, 160); setMessages((m) => joinAssistant(m, { role: 'assistant', text: `You declined this plan${ex ? ` (${ex})` : ''}, so no files were changed. Tell me if you want me to continue with it.`, time: Date.now() })); setPendingPlan(null) }}
         />
       )}
 
@@ -2467,7 +2467,7 @@ case 'importZip': setShowImport(true); break
       {editNote && <MinPill anim="writing" title={editNote.title} sub={editNote.sub} stack={2} onClick={() => setEditNote(null)} />}
 
       {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
-        <ActionCard canRun={!!window.desktop?.termRun} actions={aiActions} onApprove={runAiAction} onDismiss={(a) => setAiActions((l) => l.filter((x) => x !== a))} />
+        <ActionCard canRun={!!window.desktop?.termRun} actions={aiActions} onApprove={runAiAction} onDismiss={(a) => { setAiActions((l) => l.filter((x) => x !== a)); setMessages((m) => joinAssistant(m, { role: 'assistant', text: `You declined: ${a.message || a.command || a.type}. Nothing was run. Tell me if you want me to continue with it.`, time: Date.now() })) }} />
       )}
 
       {linkActions.length > 0 && !pendingPlan && !pendingPlanning && aiActions.length === 0 && (

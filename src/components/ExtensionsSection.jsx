@@ -17,7 +17,7 @@ function Field({ label, hint, children }) {
 function AddForm({ initial, onDone, onBack }) {
   const [name, setName] = useState(initial?.name || '')
   const [url, setUrl] = useState(initial?.url || '')
-  const [mode, setMode] = useState(initial?.headers?.length ? 'headers' : 'none')
+  const [mode, setMode] = useState(initial?.oauth ? 'oauth' : initial?.headers?.length ? 'headers' : 'none')
   const [headers, setHeaders] = useState(initial?.headers?.length ? initial.headers : [])
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState('')
@@ -129,6 +129,7 @@ function StoreCard({ item, installed, onInstalled, onCustomize }) {
   }
   const install = async () => {
     setErr('')
+    if (item.oauth) { onCustomize(() => ({ name: item.name, url: item.url, storeId: item.id, oauth: true })); return }
     if (needs && !open) { setOpen(true); return }
     setBusy(true)
     try { await addServer(build()); setOpen(false); onInstalled() } catch (e) { setErr(e.message) }

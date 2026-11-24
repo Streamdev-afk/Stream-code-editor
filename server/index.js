@@ -928,9 +928,23 @@ function rulesBlock(req, lite) {
   const mem = clip(b.memoryContext, 4500)
   if (mem) out += `\n\n${mem}`
   if (Array.isArray(b.mcp) && b.mcp.length) {
-    const lines = b.mcp.slice(0, 40).map((t) => `- ${clip(String(t.server), 40)} / ${clip(String(t.name), 80)}(${clip(String(t.schema), 200)}${Array.isArray(t.required) && t.required.length ? `; required: ${t.required.slice(0, 8).map((x) => clip(String(x), 40)).join(', ')}` : ''}): ${clip(String(t.description), 200)}`)
-    out += `\n\n## CONNECTED TOOLS (MCP extensions the user added)\nYou may propose using these with an "mcp_call" action: {"type":"mcp_call","server":"<server>","tool":"<tool>","args":{...},"message":"why"}. The user approves each call and the result is shown in the chat. Only use one when it clearly helps the request. Never claim a tool ran.\n${lines.join('\n')}`
+    const tl = b.mcp.slice(0, 40)
+    const lines = tl.map((t) => `- ${clip(String(t.server), 40)} / ${clip(String(t.name), 80)}(${clip(String(t.schema), 200)}${Array.isArray(t.required) && t.required.length ? `; required: ${t.required.slice(0, 8).map((x) => clip(String(x), 40)).join(', ')}` : ''}): ${clip(String(t.description), 200)}`)
+    const uses = [...new Map(tl.filter((t) => t.use).map((t) => [String(t.server), `- ${clip(String(t.server), 40)}: ${clip(String(t.use), 240)}`])).values()]
+    out += `\n\n## CONNECTED TOOLS (extensions the user added)
+You can use these with an "mcp_call" action: {"type":"mcp_call","server":"<server>","tool":"<tool>","args":{...},"message":"why"}.
+- Use one when it clearly helps (current docs, the user's own data, an outside service). Do not use one for something you can just write yourself.
+- Propose ONE call at a time. You cannot see its result in the same reply: say what you expect from it. The user approves it, the result appears in the chat, and you carry on from it in the next turn.
+- Use the exact server and tool names and the argument names from the schema. If a required argument is missing, ask the user for it instead of guessing.
+- Never claim a tool ran or invent what it returned.
+${uses.length ? `How to use each extension:\n${uses.join('\n')}\n` : ''}Tools:
+${lines.join('\n')}`
   }
+  out += `\n\n## HOW TO TALK (always follow)
+- Write your reply as flowing sentences that blend the idea with what you actually did, for example "I built the login page with a green header and wired the form to the new /api/login route". Never an idea paragraph first and then a separate list of what you did.
+- Finish with one short checkpoint line in plain words: what is done and what you are doing or suggesting next, for example "Done: the header and the form. Next: I'm adding validation." Only say what really happened.
+- If the chat shows the user declined something (a plan, a file change or an action), do not redo it or argue. Say briefly what you did get done and that the declined part was declined, and only offer to continue with it if they want it.
+`
   if (b.fullAccess === true) {
     out += `\n\n## FULL ACCESS MODE (the user is away and trusts you)
 - Nobody will approve anything. Do the whole job yourself and keep going until it works.

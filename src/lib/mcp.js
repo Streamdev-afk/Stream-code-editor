@@ -1,3 +1,4 @@
+import { STORE } from './extStore'
 // MCP extensions: tool servers the AI may use. The list lives in this browser only.
 import { API_BASE } from './api'
 import { apiFetch } from './supabase'
@@ -106,7 +107,8 @@ export function activeTools() {
   const out = []
   for (const s of getServers()) {
     if (s.enabled === false) continue
-    for (const t of s.tools || []) out.push({ server: s.name, name: t.name, description: t.description, schema: t.schema, required: t.required })
+    const use = ((STORE.find((x) => x.id === s.storeId) || {}).use) || ''
+    for (const t of s.tools || []) out.push({ server: s.name, name: t.name, description: t.description, schema: t.schema, required: t.required, use })
   }
   return out.slice(0, 40)
 }
