@@ -4,6 +4,9 @@ import { createClient } from '@supabase/supabase-js'
 import { resolveTier } from './usage.js'
 import { entryFor, tierRank } from './catalog.js'
 
+// Models anyone can pick. Everything else (the stronger ones) needs a paid plan unless ai_models says otherwise.
+const FREE_MODELS = new Set(['auto', 'openai/gpt-oss-20b', 'openai/gpt-oss-120b', 'google/gemma-4-26b-a4b-it:free', 'nvidia/nemotron-3.5-lightning:free'])
+
 const RANK = { anonymous: 0, free: 0, go: 1, plus: 2, pro3x: 2, pro: 3, pro5x: 3, pro10x: 3, max: 4, max2: 4, max3: 4, max5: 4 }
 const PLAN_RANK = { free: 0, go: 1, plus: 2, pro: 3, max: 4 }
 const admin = process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY
@@ -32,10 +35,13 @@ export async function planGate(req, _res, next) {
       const e = entryFor(b.model)
       if (!e || tierRank(e.tier) > rank) delete b.model
       else req.creditWeight = e.cost
+    } else if (b.model && FREE_MODELS.has(b.model)) {
+      req.creditWeight = (admin && (await modelRanks()).get(b.model)?.cost) || 1 // free to pick on every plan
     } else if (b.model && admin) {
       const info = (await modelRanks()).get(b.model)
       if (info && info.rank > rank) delete b.model // falls back to the server's default model
       else if (info) req.creditWeight = info.cost
+      else if (!FREE_MODELS.has(b.model) && rank < 1) delete b.model
     }
   } catch { /* never block a request because the gate failed */ }
   next()

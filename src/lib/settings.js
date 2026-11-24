@@ -23,7 +23,7 @@ export const DEFAULT_SETTINGS = {
   cursorStyle: 'line',     // line | block | underline
   whitespace: 'none',      // none | boundary | all
   team: false,
-     model: 'openai/gpt-oss-20b',
+     model: 'auto',
   thinking: 'medium',
   behavior: 'friendly',
 }
@@ -82,11 +82,12 @@ export const THEMES = {
 }
 
 export const AVAILABLE_MODELS = [
+  { id: 'auto', label: 'Auto', hint: 'Switches between the free models for you', badge: 'default', best: 'Everyday use. Picks a free model that is working and fast', weak: 'You cannot choose which model answers', speed: 4, power: 3, tier: 'free' },
   {
     id: 'openai/gpt-oss-20b',
     label: 'GPT-OSS 20B',
     hint: 'Fast · good for most tasks',
-    badge: 'default', best: 'Everyday chat, small edits, quick questions', weak: 'Struggles with big multi-file builds', speed: 4, power: 2, tier: 'free',
+    badge: 'alt', best: 'Everyday chat, small edits, quick questions', weak: 'Struggles with big multi-file builds', speed: 4, power: 2, tier: 'free',
   },
   {
     id: 'openai/gpt-oss-120b',
@@ -96,14 +97,14 @@ export const AVAILABLE_MODELS = [
   },
   { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B', hint: 'Free model · quick and clear', badge: 'alt', best: 'Clear explanations, light coding (free)', weak: 'Limited on big projects; free queue can be busy', speed: 3, power: 2, tier: 'free', },
   { id: 'nvidia/nemotron-3.5-lightning:free', label: 'Nemotron Lightning', hint: 'Free model · very fast', badge: 'alt', best: 'Fast answers and small fixes (free)', weak: 'Simple tasks only', speed: 5, power: 2, tier: 'free', },
-  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', hint: 'Free model · stronger', badge: 'pro', best: 'Stronger coding and writing (free)', weak: 'Slower in busy hours', speed: 3, power: 3, tier: 'free', },
-  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'Nemotron Reasoning', hint: 'Free model · thinks first', badge: 'pro', best: 'Step-by-step reasoning, bug hunting (free)', weak: 'Thinks first, so replies take longer', speed: 2, power: 3, tier: 'free', },
-  { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron Ultra 550B', hint: 'Frontier size · best for hard tasks', badge: 'pro', best: 'Hard problems, big thinking (free)', weak: 'Often queued. Falls back to a faster model after 20s', speed: 1, power: 5, tier: 'free', },
+  { id: 'google/gemma-4-31b-it:free', label: 'Gemma 4 31B', hint: 'Free model · stronger', badge: 'pro', best: 'Stronger coding and writing (free)', weak: 'Slower in busy hours', speed: 3, power: 3, tier: 'go', },
+  { id: 'nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free', label: 'Nemotron Reasoning', hint: 'Free model · thinks first', badge: 'pro', best: 'Step-by-step reasoning, bug hunting (free)', weak: 'Thinks first, so replies take longer', speed: 2, power: 3, tier: 'go', },
+  { id: 'nvidia/nemotron-3-ultra-550b-a55b:free', label: 'Nemotron Ultra 550B', hint: 'Frontier size · best for hard tasks', badge: 'pro', best: 'Hard problems, big thinking (free)', weak: 'Often queued. Falls back to a faster model after 20s', speed: 1, power: 5, tier: 'go', },
   {
     id: 'qwen/qwen3.8-27b',
     label: 'Qwen 3.8 27B',
     hint: 'Vision-capable · good balance',
-    badge: 'alt', best: 'Reading screenshots, balanced coding', weak: 'Mid-size, not for the hardest jobs', speed: 3, power: 3, tier: 'free',
+    badge: 'alt', best: 'Reading screenshots, balanced coding', weak: 'Mid-size, not for the hardest jobs', speed: 3, power: 3, tier: 'go',
   },
 ]
 

@@ -10,7 +10,7 @@ import { byokMiddleware, getByok, byokCreate, byokError, readByok, listModels } 
 import { getIonPlan } from './subscriptions.js'
 import { planGate, projectGate } from './gate.js'
 import registerMcp from './mcp.js'
-import { CATALOG, PROVIDERS, entryFor, resolve, availableCatalog } from './catalog.js'
+import { CATALOG, PROVIDERS, entryFor, resolve, availableCatalog, autoPool } from './catalog.js'
 import { resolveTier } from './usage.js'
 import { checkLimit as _checkLimit, recordUsage as _recordUsage, getUsage, THINKING_MULTIPLIERS, issueTurn, useTurn } from './usage.js'
 // Using your own key never counts against plan limits
@@ -219,7 +219,28 @@ async function* compatStream(params, cfg, st, ms = 25000) {
   }
   if (!st.got) throw new Error('empty reply')
 }
+let autoN = 0
 async function* guardedStream(params) {
+  // Auto: switch between the free models in turn, skip any that fail, finish on Groq
+  if (!getByok() && params.model === 'auto') {
+    const { reasoning_effort, reasoning_format, ...rest } = params
+    const pool = await autoPool()
+    const start = autoN++ % pool.length
+    const st = { got: false }
+    let useGroq = false
+    for (let k = 0; k < pool.length; k++) {
+      const c = pool[(start + k) % pool.length]
+      if (c.groq) { useGroq = true; break }
+      try {
+        yield* compatStream({ ...rest, model: c.real }, { key: process.env[PROVIDERS[c.p].env], model: c.real, base: PROVIDERS[c.p].base }, st)
+        return
+      } catch (err) {
+        if (st.got) throw err
+        console.log(`[auto] ${c.p}/${c.real} failed: ${String(err?.message || err).slice(0, 140)}`)
+      }
+    }
+    params = { ...params, model: PREFERRED[0] }
+  }
   // catalog models (Fireworks, Cerebras, Together): try each provider that has a key, then fall back to the Groq models below
   if (!getByok() && /^cat::/.test(String(params.model || ''))) {
     const e = entryFor(params.model)
@@ -325,6 +346,7 @@ async function* guardedStream(params) {
 // Retry wrapper
 // ------------------------------------------------------------
 async function callGroqWithRetry(params, maxAttempts = 4) {
+  if (params.model === 'auto') params = { ...params, model: PREFERRED[0] }
   let lastErr
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -688,7 +710,7 @@ ${codeForPrompt ? `\n\`\`\`${language || ''}\n${codeForPrompt}\n\`\`\`` : ''}${e
       }
     }
     const stream = guardedStream({
-      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
+      model: images.length ? VISION_MODEL : (model || 'auto'),
       messages: [{ role: 'system', content: systemPrompt + (digest ? `\n\n## PROJECT OVERVIEW (a digest of every file you have access to: structure, key lines and the start of each file)\nAnswer from this. Do not claim you cannot see the files. If you need exact lines of one file, say which file and ask the user to request that specific change.\n${digest}\n` : '') + (webCtx || '') }, ...chatMessages],
       stream: true,
       temperature: 0.6,
@@ -741,7 +763,7 @@ app.post('/api/edit', async (req, res) => {
 
   try {
     const stream = guardedStream({
-      model: model || 'openai/gpt-oss-20b',
+      model: model || 'auto',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userPrompt }],
       stream: true,
       temperature: 0.3,
@@ -853,7 +875,7 @@ For React:
 
   try {
     const stream = guardedStream({
-      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
+      model: images.length ? VISION_MODEL : (model || 'auto'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       temperature: 0.2,
@@ -1042,7 +1064,7 @@ No markdown. No fences. No prose outside JSON.${QUALITY_GUIDE}${shellPart(ex)}${
 
   try {
     const stream = guardedStream({
-      model: images.length ? VISION_MODEL : (model || 'openai/gpt-oss-20b'),
+      model: images.length ? VISION_MODEL : (model || 'auto'),
       messages: [{ role: 'system', content: SYSTEM }, ...conversation],
       stream: true,
       ...(getByok() ? {} : { response_format: { type: 'json_object' } }), // makes the model answer with one JSON object
@@ -1172,7 +1194,7 @@ ${QUALITY_GUIDE}${shellPart(ex)}${getBehavioralPrefix(behavior)}${personaBlock(r
 
   try {
     const stream = guardedStream({
-      model: model || 'openai/gpt-oss-20b',
+      model: model || 'auto',
       messages: [
         { role: 'system', content: SYSTEM },
         { role: 'user', content: USER },
@@ -1219,7 +1241,7 @@ Rules:
     const USER = `The user asked: ${String(originalPrompt || '(not given)').slice(0, 600)}\n\nCHANGES THAT WERE APPLIED:\n${list || '(nothing was applied)'}${failed.length ? `\n\nFAILED (NOT done):\n${failed.map((f) => '- ' + f).join('\n')}` : ''}`
     let text = ''
     const stream = guardedStream({
-      model: model || 'openai/gpt-oss-20b',
+      model: model || 'auto',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
       stream: true,
       temperature: 0.3,
@@ -1270,7 +1292,7 @@ ${errorList}`
 
   try {
     const completion = await callGroqWithRetry({
-      model: model || 'openai/gpt-oss-20b',
+      model: model || 'auto',
       messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: USER }],
       temperature: 0.2,
       max_tokens: 3000,

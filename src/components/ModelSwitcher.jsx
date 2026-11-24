@@ -19,7 +19,7 @@ export default function ModelSwitcher({ value, onChange, disabled, compact = fal
   const own = byokActive() ? getByok() : null
   const cat = useCatalog()
   const ALL = [...cat, ...AVAILABLE_MODELS]
-  const lockOf = (m) => (m.id.startsWith('cat::') ? ((PLAN_RANK[m.tier] ?? 0) > plan.rank ? m.tier : null) : plan.modelLock(m.id))
+  const lockOf = (m) => m.tier === 'free' ? null : (m.id.startsWith('cat::') || m.tier ? ((PLAN_RANK[m.tier] ?? 0) > plan.rank ? m.tier : null) : plan.modelLock(m.id)) || (m.tier && m.tier !== 'free' ? plan.modelLock(m.id) : null)
 
   const current = ALL.find((m) => m.id === value) || AVAILABLE_MODELS[0]
 
