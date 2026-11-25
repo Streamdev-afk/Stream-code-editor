@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom'
 import Icon from './Icon'
 import AiAnim from './AiAnim'
 import RichText from './RichText'
+import ImageGallery from './ImageGallery'
 import { getWeb, setWeb } from '../lib/web'
 import { useState, useRef, useEffect } from 'react'
 import { streamAgent, planTask, buildDigest, isOverviewQuestion, askQuestionsOn } from '../lib/ai'
@@ -835,6 +836,7 @@ setMessages((m) => {
                       ? <>{msg._status && streaming && isLast && <AiAnim name={/run|command|test|install|terminal/i.test(msg.text || '') ? 'running' : 'writing'} size={26} />}{msg.text || (streaming && isLast ? '▍' : '')}</>
                       : <>
                           <RichText text={extractAsk(msg.text).text} />
+                          {msg.gallery && msg.gallery.length > 0 && <ImageGallery items={msg.gallery} />}
                           {streaming && isLast && <span className="rt-caret">▍</span>}
                         </>
                   )}

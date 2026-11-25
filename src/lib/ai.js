@@ -14,7 +14,7 @@ import { apiFetch } from './supabase'
 import { loadActivePersona } from './team'
 import { createShell, runCommand, isReadOnlyCommand } from './shell'
 import { remapOps } from './ops'
-import { activeTools } from './mcp'
+import { activeTools, extCatalog } from './mcp'
 import { contextForQuery, chunkText } from './codeindex'
 
 export async function streamEdit({ action, code, selection, language, instruction, model, thinking, behavior }, onChunk) {
@@ -137,7 +137,7 @@ async function postStreamOnce(path, body, onChunk) {
   const res = await apiFetch(`${API_BASE}${path}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK && !FULL, fullAccess: FULL, rules: RULES, mcp: activeTools(), appContext: buildAppContext(), memoryContext: buildMemoryContext() }),
+    body: JSON.stringify({ ...body, persona, web: getWeb(), allowQuestions: ASK_OK && !FULL, fullAccess: FULL, rules: RULES, mcp: activeTools(), exts: extCatalog(), appContext: buildAppContext(), memoryContext: buildMemoryContext() }),
   })
   if (!res.ok) {
     let msg = `HTTP ${res.status}`

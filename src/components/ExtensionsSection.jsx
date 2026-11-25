@@ -160,7 +160,7 @@ function StoreCard({ item, installed, onInstalled, onCustomize }) {
   )
 }
 
-export default function ExtensionsSection() {
+export default function ExtensionsSection({ only, onDone }) {
   const [tab, setTab] = useState('store')
   const [list, setList] = useState(getServers())
   const [busy, setBusy] = useState('')
@@ -174,22 +174,22 @@ export default function ExtensionsSection() {
   const refresh = async (n) => { setErr(''); setBusy(n); try { await refreshServer(n) } catch (e) { setErr(`${n}: ${e.message}`) } setBusy('') }
   const have = new Set(list.map((s) => s.storeId).filter(Boolean))
 
-  if (form) return <AddForm initial={form} onDone={() => { setForm(null); setTab('installed') }} onBack={() => setForm(null)} />
+  if (form) return <AddForm initial={form} onDone={() => { setForm(null); setTab('installed'); if (onDone) onDone() }} onBack={() => setForm(null)} />
 
   return (
     <div className="ext">
-      <div className="ext-tabs">
+      {!only && <div className="ext-tabs">
         <button className={tab === 'store' ? 'on' : ''} onClick={() => setTab('store')}>Store</button>
         <button className={tab === 'installed' ? 'on' : ''} onClick={() => setTab('installed')}>Installed{list.length ? ` (${list.length})` : ''}</button>
         <button className="ext-add" onClick={() => setForm({})}>+ Custom</button>
-      </div>
+      </div>}
 
       {tab === 'store' && (
         <>
-          <div className="ext-hint">Add tools the AI can use. It proposes a call and you approve each one. Some servers need a free key from their provider.</div>
+          {!only && <div className="ext-hint">Add tools the AI can use. It proposes a call and you approve each one. Some servers need a free key from their provider.</div>}
           <div className="ext-grid">
-            {STORE.map((it) => (
-              <StoreCard key={it.id} item={it} installed={have.has(it.id)} onInstalled={() => setTab('installed')} onCustomize={(b) => { try { setForm(b()) } catch { setForm({ name: it.name, url: it.url || '' }) } }} />
+            {STORE.filter((it) => !only || it.id === only).map((it) => (
+              <StoreCard key={it.id} item={it} installed={have.has(it.id)} onInstalled={() => (onDone ? onDone() : setTab('installed'))} onCustomize={(b) => { try { setForm(b()) } catch { setForm({ name: it.name, url: it.url || '' }) } }} />
             ))}
           </div>
         </>

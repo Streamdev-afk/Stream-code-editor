@@ -120,3 +120,8 @@ export async function callTool({ server, tool, args }) {
   if (!(s.tools || []).some((t) => t.name === tool)) throw new Error(`"${server}" has no tool named ${tool}`)
   return post('/api/mcp/call', { url: s.url, headers: headersOf(s), tool, args: args && typeof args === 'object' ? args : {} })
 }
+
+export const extCatalog = () => {
+  const have = new Set(getServers().map((x) => x.storeId).filter(Boolean))
+  return STORE.map((x) => ({ id: x.id, name: x.name, desc: String(x.desc || '').slice(0, 80), on: have.has(x.id) }))
+}

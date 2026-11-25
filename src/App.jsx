@@ -41,6 +41,9 @@ import DeployModal from './components/DeployModal'
 import AgentsModal from './components/AgentsModal'
 import { subscribe as subscribeAgents, runningCount, readyCount } from './lib/agents'
 import { callTool } from './lib/mcp'
+import { STORE } from './lib/extStore'
+import { searchImages, fetchImageData } from './lib/images'
+import ExtConnectModal from './components/ExtConnectModal'
 import { ensureBaseline, resetBaseline, diffFiles, changeSummary } from './lib/baseline'
 import ImportModal from './components/ImportModal'
 import { exportProjectToZip, downloadBlob, importZipToFiles } from './lib/zip'
@@ -574,6 +577,16 @@ const [showLogin, setShowLogin] = useState(false)
   useEffect(() => { window.dispatchEvent(new CustomEvent('qoders-cmd-state', { detail: { busy: cmdActive } })) }, [cmdActive])
   const ALLOWED_AI_ACTIONS = ['github_push', 'github_import', 'github_deploy', 'mcp_call', 'run_preview', 'run_tests', 'run_command']
   const queueAiActions = (list) => {
+    const raw = Array.isArray(list) ? list : []
+    const finds = raw.filter((a) => a && a.type === 'find_extension').slice(0, 2).map((a) => { const k = String(a.id || a.name || '').toLowerCase(); return STORE.find((x) => x.id === k || x.name.toLowerCase() === k) }).filter(Boolean)
+    if (finds.length) setExtPills(finds.map((x) => ({ id: x.id, name: x.name })))
+    const pic = raw.find((a) => a && a.type === 'show_images' && a.query)
+    if (pic) {
+      const q = String(pic.query).slice(0, 60)
+      searchImages(q)
+        .then((items) => setMessages((m) => [...m, { role: 'assistant', text: items.length ? `Here are some ideas for "${q}". Add any of them to your project.` : `I could not find images for "${q}".`, gallery: items, time: Date.now() }]))
+        .catch((e) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: `Image search failed: ${e.message}`, time: Date.now() })))
+    }
     const clean = (Array.isArray(list) ? list : [])
       .filter((a) => a && ALLOWED_AI_ACTIONS.includes(a.type))
       .slice(0, 3)
@@ -615,7 +628,7 @@ const [showLogin, setShowLogin] = useState(false)
       const label = `${a.server} / ${a.tool}`
       addActivity([{ kind: 'check', title: `Calling ${label}`, detail: JSON.stringify(a.args || {}).slice(0, 200) }])
       callTool({ server: a.server, tool: a.tool, args: a.args })
-        .then((r) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: `**${label}** ${r.isError ? 'reported an error' : 'returned'}:\n\n\`\`\`text\n${r.text}\n\`\`\``, time: Date.now() })))
+        .then((r) => { addActivity([{ kind: 'check', title: `${label} ${r.isError ? 'failed' : 'finished'}`, detail: String(r.text || '').replace(/\s+/g, ' ').slice(0, 160) }]); return setMessages((m) => joinAssistant(m, { role: 'assistant', text: `**${label}** ${r.isError ? 'reported an error' : 'returned'}:\n\n\`\`\`text\n${r.text}\n\`\`\``, time: Date.now() })) })
         .catch((e) => setMessages((m) => joinAssistant(m, { role: 'assistant', text: `The extension call to ${label} failed: ${e.message}`, time: Date.now() })))
     }
     else if (a.type === 'run_preview') { setViewMode('preview'); setMobileView?.('preview') }
@@ -1108,6 +1121,25 @@ const saveActive = () => {
   // ---- save to a real folder on this computer ----
   const filesRef = useRef(files)
   filesRef.current = files
+  const [extPills, setExtPills] = useState([])
+  const [extOpen, setExtOpen] = useState(null)
+  useEffect(() => {
+    const h = async (e) => {
+      const { url, title } = e.detail || {}
+      try {
+        const dataUrl = await fetchImageData(url)
+        const kind = (dataUrl.match(/^data:image\/(\w+)/) || [])[1] || 'jpg'
+        const ext = kind === 'jpeg' ? 'jpg' : kind
+        const base = String(title || 'image').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 30) || 'image'
+        let path = `assets/${base}.${ext}`
+        for (let n = 2; filesRef.current[path]; n++) path = `assets/${base}-${n}.${ext}`
+        setFiles((f) => ({ ...f, [path]: { content: dataUrl, language: 'plaintext' } }))
+        setMessages((m) => joinAssistant(m, { role: 'assistant', text: `Added **${path}** to your project. Use it as \`<img src="${path}">\`.`, time: Date.now() }))
+      } catch (err) { setMessages((m) => joinAssistant(m, { role: 'assistant', text: `Could not add that image: ${err.message}`, time: Date.now() })) }
+    }
+    window.addEventListener('qoders-add-image', h)
+    return () => window.removeEventListener('qoders-add-image', h)
+  }, [])
   const [diskFolder, setDiskFolder] = useState(null)
   noteLayout(activeSession.id, files, activeSession.title) // decides which folder inside the chosen one holds this project
   window.__qodersTitle = activeSession.title
@@ -2472,6 +2504,13 @@ case 'importZip': setShowImport(true); break
       {fullAccess && aiStreaming && <MinPill anim="thinking" title="AI is working" sub="Thinking and writing…" stack={1} onClick={() => {}} />}
       {editNote && <MinPill anim="writing" title={editNote.title} sub={editNote.sub} stack={2} onClick={() => setEditNote(null)} />}
 
+        {extPills.length > 0 && !extOpen && (
+          <div className="ext-pills">
+            {extPills.map((p) => <button key={p.id} className="ext-pill" onClick={() => setExtOpen(p.id)}><Icon name="bolt" size={13} /> Connect {p.name}</button>)}
+            <button className="ext-pill-x" onClick={() => setExtPills([])} title="Dismiss">×</button>
+          </div>
+        )}
+        {extOpen && <ExtConnectModal id={extOpen} onClose={() => { setExtPills((p) => p.filter((x) => x.id !== extOpen)); setExtOpen(null) }} />}
       {aiActions.length > 0 && !pendingPlan && !pendingPlanning && (
         <ActionCard canRun={!!window.desktop?.termRun} actions={aiActions} onApprove={runAiAction} onDismiss={(a) => { setAiActions((l) => l.filter((x) => x !== a)); setMessages((m) => joinAssistant(m, { role: 'assistant', text: `You declined: ${a.message || a.command || a.type}. Nothing was run. Tell me if you want me to continue with it.`, time: Date.now() })) }} />
       )}

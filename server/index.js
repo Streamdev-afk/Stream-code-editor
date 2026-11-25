@@ -952,6 +952,13 @@ function rulesBlock(req, lite) {
   let out = r ? `\n\n## PROJECT RULES (written by the user for this project - always follow them)\n${r}` : ''
   const mem = clip(b.memoryContext, 4500)
   if (mem) out += `\n\n${mem}`
+  if (Array.isArray(b.exts) && b.exts.length) {
+    const list = b.exts.slice(0, 30).map((x) => `- ${clip(String(x.id), 30)}: ${clip(String(x.name), 40)}, ${clip(String(x.desc), 80)}${x.on ? ' [connected]' : ''}`)
+    out += `\n\n## EXTENSIONS THE USER CAN CONNECT
+${list.join('\n')}
+- If the user needs one of these services and it is not [connected], add {"type":"find_extension","id":"<id>"} to "actions" and say in one line that a connect button is ready. Do not ask them to hunt for it. If it is [connected], use its tools. If the service is not in the list, say it is not available yet.
+- Pictures, photos or design references: add {"type":"show_images","query":"3-6 word search"} to "actions" instead of listing links. The images appear in the chat and the user can add them to the project under assets/. Never invent image URLs.`
+  }
   if (Array.isArray(b.mcp) && b.mcp.length) {
     const tl = b.mcp.slice(0, 40)
     const lines = tl.map((t) => `- ${clip(String(t.server), 40)} / ${clip(String(t.name), 80)}(${clip(String(t.schema), 200)}${Array.isArray(t.required) && t.required.length ? `; required: ${t.required.slice(0, 8).map((x) => clip(String(x), 40)).join(', ')}` : ''}): ${clip(String(t.description), 200)}`)
@@ -1691,7 +1698,7 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Something went wrong. Try again.' })
 })
 
-registerMcp(app)
+registerMcp(app, ALLOWED_ORIGINS.filter((o) => /^https?:\/\//.test(o)))
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Backend running on port ${PORT}`)

@@ -154,7 +154,7 @@ async function discover(mcpUrl) {
   throw new Error('This server does not offer OAuth sign-in that we can find')
 }
 
-export function registerOauth(app, guard) {
+export function registerOauth(app, guard, origins = []) {
   app.post('/api/mcp/oauth/start', async (req, res) => {
     if (guard(req, res)) return
     try {
@@ -165,6 +165,11 @@ export function registerOauth(app, guard) {
       await safeUrl(meta.authorization_endpoint); await safeUrl(meta.token_endpoint)
       let clientId = String(req.body?.clientId || '').slice(0, 300)
       let clientSecret = String(req.body?.clientSecret || '').slice(0, 300)
+      // Apps like Vercel accept a public "client ID metadata document" instead of a hand-approved registration
+      const selfBase = String(process.env.PUBLIC_API_URL || `https://${req.get('host')}`).replace(/\/+$/, '')
+      let rOrigin = ''
+      try { rOrigin = new URL(redirectUri).origin } catch { /* checked above */ }
+      if (!clientId && meta.client_id_metadata_document_supported === true && /^https:\/\//.test(selfBase) && origins.includes(rOrigin)) clientId = `${selfBase}/api/mcp/client.json`
       if (!clientId) {
         if (!meta.registration_endpoint) throw new Error('This server needs you to register your own OAuth client (enter a client ID)')
         const reg = await postForm(meta.registration_endpoint, {
@@ -223,13 +228,57 @@ export function registerOauth(app, guard) {
   })
 }
 
-export default function registerMcp(app) {
+export default function registerMcp(app, origins = []) {
   const guard = (req, res) => {
     if (!req.isAuth || !req.user?.id) { res.status(401).json({ error: 'Sign in to use extensions' }); return true }
     if (limited(req)) { res.status(429).json({ error: 'Slow down a little' }); return true }
     return false
   }
-  registerOauth(app, guard)
+  registerOauth(app, guard, origins)
+
+  app.get('/api/mcp/client.json', (req, res) => {
+    const base = String(process.env.PUBLIC_API_URL || `https://${req.get('host')}`).replace(/\/+$/, '')
+    res.setHeader('Cache-Control', 'public, max-age=300')
+    res.json({
+      client_id: `${base}/api/mcp/client.json`, client_name: 'ION Qoders', client_uri: origins.find((o) => o.startsWith('https://')) || base,
+      redirect_uris: origins.map((o) => `${o}/mcp-callback.html`), grant_types: ['authorization_code', 'refresh_token'],
+      response_types: ['code'], token_endpoint_auth_method: 'none',
+    })
+  })
+
+  // Image ideas for the AI to show (Openverse: free, openly licensed images)
+  app.get('/api/images', async (req, res) => {
+    if (guard(req, res)) return
+    try {
+      const q = String(req.query.q || '').trim().slice(0, 100)
+      if (!q) return res.status(400).json({ error: 'Say what to search for' })
+      const r = await fetch(`https://api.openverse.org/v1/images/?q=${encodeURIComponent(q)}&page_size=8&mature=false`, { headers: { 'User-Agent': 'ion-qoders' }, signal: AbortSignal.timeout(10000) })
+      const j = await r.json()
+      const images = (j.results || []).slice(0, 8).map((x) => ({ title: String(x.title || '').slice(0, 80), thumb: x.thumbnail, url: x.url, link: x.foreign_landing_url, by: String(x.creator || '').slice(0, 60), license: String(x.license || '') }))
+        .filter((x) => /^https:\/\//.test(x.thumb || '') && /^https:\/\//.test(x.url || ''))
+      res.json({ images })
+    } catch { res.status(400).json({ error: 'Image search is not available right now' }) }
+  })
+
+  // Brings one web image into the project as a data URL (small images only, public hosts only)
+  app.get('/api/images/fetch', async (req, res) => {
+    if (guard(req, res)) return
+    try {
+      let u = await safeUrl(req.query.url)
+      let r
+      for (let i = 0; i < 3; i++) {
+        r = await fetch(u, { redirect: 'manual', headers: { 'User-Agent': 'ion-qoders' }, signal: AbortSignal.timeout(12000) })
+        if (r.status >= 300 && r.status < 400 && r.headers.get('location')) { u = await safeUrl(new URL(r.headers.get('location'), u).toString()); continue }
+        break
+      }
+      const type = String(r.headers.get('content-type') || '').split(';')[0]
+      if (!r.ok || !/^image\/(png|jpe?g|gif|webp|svg\+xml)$/.test(type)) throw new Error('That is not an image I can add')
+      if (Number(r.headers.get('content-length') || 0) > 700000) throw new Error('That image is too big (max 700 KB)')
+      const buf = Buffer.from(await r.arrayBuffer())
+      if (buf.length > 700000) throw new Error('That image is too big (max 700 KB)')
+      res.json({ dataUrl: `data:${type};base64,${buf.toString('base64')}` })
+    } catch (e) { res.status(400).json({ error: String(e.message || 'Could not get the image').slice(0, 200) }) }
+  })
 
   app.post('/api/mcp/tools', async (req, res) => {
     if (guard(req, res)) return
