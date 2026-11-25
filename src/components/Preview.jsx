@@ -31,6 +31,13 @@ export default function Preview({ files, activeFile, onConsoleMessage, sessionId
 
   const html = useMemo(() => buildPreview(files, activeFile), [files, activeFile])
   const previewUrl = sessionId ? `${API_BASE}/preview/${sessionId}/` : null
+  // pages whose module scripts import other files cannot run inline: use the live preview, which bundles them
+  const needsLive = /<script\b[^>]*type=["']module["'][^>]*\bsrc=["'](?!https?:|\/\/)/i.test(html)
+  const wasLive = useRef(false)
+  useEffect(() => {
+    if (needsLive && !wasLive.current && previewUrl) { wasLive.current = true; setMode('url') }
+    if (!needsLive) wasLive.current = false
+  }, [needsLive, previewUrl])
   useEffect(() => {
     const handler = (e) => {
       if (e.data && e.data.__pick && e.source === iframeRef.current?.contentWindow) {

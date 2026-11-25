@@ -25,6 +25,7 @@ const OP_LABEL = {
   write_file: 'modify',
   edit_file: 'edit',
   delete_file: 'delete',
+  rename_file: 'rename',
 }
 
 export default function AgentModal({ plan, files, onAccept, onReject, originalPrompt }) {

@@ -230,7 +230,7 @@ useEffect(() => {
       const creation = isCreationOnly(text, imgs.length > 0)
       // "how does it look?": read EVERY file through a cached digest, no terminal needed
       const overview = !creation && isOverviewQuestion(text) && Object.keys(files || {}).length > 0
-      const digest = overview ? buildDigest(files, activeFile) : ''
+      const digest = !creation && Object.keys(files || {}).length > 0 && (overview || !shouldExplore(files)) ? buildDigest(files, activeFile) : ''
       const explore = shouldExplore(files) && !overview
       const shell = explore ? createShell(files, '/') : null
       const index = explore ? buildIndex(files) : null

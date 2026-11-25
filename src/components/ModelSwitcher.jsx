@@ -68,13 +68,6 @@ export default function ModelSwitcher({ value, onChange, disabled, compact = fal
                 )}
               </div>
               <div className="model-item-hint">{m.hint}</div>
-              {m.best && (
-                <div className="model-item-meta">
-                  <div className="mi-meters"><span title="How fast">⚡ {dots(m.speed || 3)}</span><span title="How strong">🧠 {dots(m.power || 3)}</span></div>
-                  <div className="mi-good">✓ {m.best}</div>
-                  <div className="mi-weak">Limits: {m.weak}</div>
-                </div>
-              )}
             </div>
           ))}
             </div>

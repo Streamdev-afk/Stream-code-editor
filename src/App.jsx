@@ -885,6 +885,8 @@ const [showLogin, setShowLogin] = useState(false)
             content: op.content ?? '',
             language: getLanguageFromPath(op.path),
           }
+        } else if (op.type === 'rename_file') {
+          if (op.newPath && nextFiles[op.path]) { nextFiles[op.newPath] = nextFiles[op.path]; delete nextFiles[op.path] }
         } else if (op.type === 'delete_file') {
           delete nextFiles[op.path]
         } else if (op.type === 'edit_file') {
@@ -1382,6 +1384,8 @@ const saveActive = () => {
         content: op.content ?? '',
         language: getLanguageFromPath(op.path),
       }
+    } else if (op.type === 'rename_file') {
+      if (op.newPath && nextFiles[op.path]) { nextFiles[op.newPath] = nextFiles[op.path]; delete nextFiles[op.path] }
     } else if (op.type === 'delete_file') {
       delete nextFiles[op.path]
     } else if (op.type === 'edit_file') {
@@ -2227,6 +2231,8 @@ case 'importZip': setShowImport(true); break
                     content: op.content ?? '',
                     language: getLanguageFromPath(op.path),
                   }
+                } else if (op.type === 'rename_file') {
+                  if (op.newPath && currentFiles[op.path]) { currentFiles[op.newPath] = currentFiles[op.path]; delete currentFiles[op.path] }
                 } else if (op.type === 'delete_file') {
                   delete currentFiles[op.path]
                 } else if (op.type === 'edit_file') {

@@ -62,13 +62,20 @@ export function applyEdits(content, edits) {
 }
 
 // A model sometimes sends code with the two characters \ and n instead of real line breaks. Put the line breaks back.
-export const fixFlat = (t) => (typeof t === 'string' && !t.includes('\n') && /\\n/.test(t) ? t.replace(/\\r\\n|\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"') : t)
+export const fixFlat = (t) => {
+  if (typeof t !== 'string' || !/\\n/.test(t)) return t
+  const un = (x) => x.replace(/\\r\\n|\\n/g, '\n').replace(/\\t/g, '\t')
+  if (!t.includes('\n')) return un(t).replace(/\\"/g, '"')
+  // mixed: a very long line that holds several escaped line breaks between statements is flattened code
+  return t.split('\n').map((l) => (l.length > 200 && (l.match(/\\n/g) || []).length >= 3 && /[;{}>)]\\n/.test(l) ? un(l) : l)).join('\n')
+}
 
 export function resolveOp(files, op) {
   const existing = files?.[op.path]
   const before = existing?.content ?? ''
 
   if (op.type === 'delete_file') return { before, after: '', errors: [] }
+  if (op.type === 'rename_file') return { before, after: before, errors: existing && op.newPath ? [] : [`${op.path} does not exist or no new name was given.`] }
 
   if (op.type === 'edit_file') {
     if (!existing) return { before: '', after: '', errors: [`${op.path} does not exist.`] }

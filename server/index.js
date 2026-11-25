@@ -60,9 +60,9 @@ app.disable('x-powered-by')
 app.use((req, res, next) => {
   res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
   res.setHeader('X-Content-Type-Options', 'nosniff')
-  res.setHeader('X-Frame-Options', 'DENY')
+  if (!req.path.startsWith('/preview/')) res.setHeader('X-Frame-Options', 'DENY') // previews must load inside the editor
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin')
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+  if (!req.path.startsWith('/preview/')) res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
   next()
 })
 const ipHits = new Map()
@@ -802,15 +802,7 @@ app.post('/api/agent', async (req, res) => {
   const MAX_FILE_CHARS = 2000
   const MAX_TOTAL_CHARS = 8000
 
-  const fileList = Object.entries(files || {})
-    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
-    .map(([p, f]) => {
-      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
-      return `--- ${p} ---\n${content}${truncated}`
-    })
-    .join('\n\n')
-    .slice(0, MAX_TOTAL_CHARS)
+  const fileList = fileDigest(files, activeFile, prompt, 12000, 3500)
 
   const SYSTEM = `You are the ION Qoders Agent, an autonomous coding agent.
 
@@ -823,7 +815,8 @@ You respond with ONLY a JSON object:
     { "type": "create_file", "path": "src/New.jsx" },
     { "type": "write_file",  "path": "src/App.jsx" },
     { "type": "edit_file",   "path": "src/App.jsx", "edits": [ { "find": "exact old text", "replace": "new text" } ] },
-    { "type": "delete_file", "path": "src/Old.jsx" }
+    { "type": "delete_file", "path": "src/Old.jsx" },
+    { "type": "rename_file", "path": "src/Old.jsx", "newPath": "src/New.jsx" }
   ],
   "actions": [ { "type": "github_push", "message": "Add pricing page" }, { "type": "run_command", "command": "npm install", "message": "Installs the packages package.json lists" } ],
   "ask": { "question": "...", "options": ["...", "..."], "multi": false }
@@ -906,6 +899,38 @@ For React:
 
 // How and when the AI may ask the user a question (shown as a pop-up with options)
 // File contents are NOT put inside the JSON: each file goes in its own block after it, so code needs no escaping
+// Builds the file section for the agent: ALL file names, then contents for the most relevant files that fit.
+function fileDigest(files, activeFile, prompt, maxTotal, maxFile) {
+  const SKIP = /(^|\/)(node_modules|\.git|dist|build|\.next|\.cache)\//
+  const txt = (f) => f?.content ?? (typeof f === 'string' ? f : '') ?? ''
+  const all = Object.entries(files || {}).filter(([p]) => !SKIP.test(p) && !/\.(gitkeep|lock|log)$/.test(p) && !/package-lock\.json$/.test(p))
+  const words = String(prompt || '').toLowerCase().match(/[a-z0-9_-]{3,}/g) || []
+  const score = ([p, f]) => (p === activeFile ? 1000 : 0) + (words.some((w) => p.toLowerCase().includes(w)) ? 100 : 0) - Math.min(txt(f).length / 1000, 50)
+  const names = all.slice(0, 400).map(([p, f]) => `${p} (${txt(f).split('\n').length} lines)`).join('\n')
+  let used = 0
+  const shown = []
+  for (const [p, f] of [...all].sort((a, b) => score(b) - score(a))) {
+    const t = txt(f)
+    const block = `--- ${p} ---\n${t.slice(0, maxFile)}${t.length > maxFile ? '\n…(truncated)' : ''}`
+    if (used + block.length > maxTotal) continue
+    used += block.length
+    shown.push(block)
+  }
+  const hidden = all.length - shown.length
+  return `ALL FILES IN THE PROJECT (${all.length}):\n${names}\n\n${hidden > 0 ? `(${hidden} file(s) above are not shown in full to save space. They DO exist. Do not assume what is inside them or that they are missing.)\n\n` : ''}${shown.join('\n\n')}`
+}
+
+const INTENT_RULES = `
+
+## BUILD OR ANSWER
+- The user may write in any language or in casual short words. Work out what they mean.
+- Change files only when they ask to build, change, fix, add, rename or remove something, however they word it ("work on it", "make it", "abeg add").
+- A question, an answer to a question you asked, an opinion or chat gets a reply in "explanation" with an EMPTY operations list. Never turn an answer into a file edit.
+- Check ALL FILES before saying a page or file is missing or before making a new one that may already exist. Link to the real file names.
+- To rename or move a file use {"type":"rename_file","path":"old","newPath":"new"}. Never create a new file and delete the old one.
+- Never open, list or write node_modules, dist, build or lock files: it wastes credits and time.
+- In code, always use real line breaks. Never type the two characters \\ and n as a newline.`
+
 const FILE_BLOCKS = `
 
 ## REPLY FORMAT (strict)
@@ -916,9 +941,9 @@ const FILE_BLOCKS = `
 the full file content, written as normal code. No escaping, no quotes around it.
 <<<END>>>
 
-Rules: the path after FILE must match the operation's path. Always close each block with <<<END>>> on its own line. Do not wrap anything in markdown fences. The "explanation" may use simple markdown (short paragraphs, - bullet lists, **bold**). If the work is big, write fewer files and say what is left in "explanation" instead of cutting a file off.`
+Rules: the path after FILE must match the operation's path. Always close each block with <<<END>>> on its own line. Do not wrap anything in markdown fences. The "explanation" may use simple markdown (short paragraphs, - bullet lists, **bold**). If the work is big, write fewer files and say what is left in "explanation" instead of cutting a file off.${INTENT_RULES}`
 
-const JSON_ONLY = '\n\n## REPLY FORMAT (strict)\nYour whole reply is exactly ONE JSON object. Start with { and end with }. No markdown fences, no text before or after, no thinking out loud. Escape newlines inside strings as \\n and quotes as \\\". If a file would be very long, split the work across fewer, shorter files instead of cutting the JSON off.'
+const JSON_ONLY = '\n\n## REPLY FORMAT (strict)\nYour whole reply is exactly ONE JSON object. Start with { and end with }. No markdown fences, no text before or after, no thinking out loud. Escape newlines inside strings as \\n and quotes as \\\". If a file would be very long, split the work across fewer, shorter files instead of cutting the JSON off.' + INTENT_RULES
 
 function rulesBlock(req, lite) {
   const b = req.body || {}
@@ -1014,15 +1039,7 @@ app.post('/api/agent/plan', async (req, res) => {
   const MAX_FILE_CHARS = 1000
   const MAX_TOTAL_CHARS = 3000
 
-  const fileList = Object.entries(files || {})
-    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
-    .map(([p, f]) => {
-      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
-      return `--- ${p} ---\n${content}${truncated}`
-    })
-    .join('\n\n')
-    .slice(0, MAX_TOTAL_CHARS)
+  const fileList = fileDigest(files, activeFile, prompt, 6000, 1500)
 
   const SYSTEM = `You are the ION Qoders Planner, an expert software architect.
 
@@ -1141,15 +1158,7 @@ app.post('/api/agent/execute-step', async (req, res) => {
   const MAX_FILE_CHARS = 6000
   const MAX_TOTAL_CHARS = 6000
 
-  const fileList = Object.entries(files || {})
-    .filter(([p]) => !p.endsWith('.gitkeep') && !p.endsWith('.lock') && !p.endsWith('.log') && !p.startsWith('node_modules/'))
-    .map(([p, f]) => {
-      const content = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').slice(0, MAX_FILE_CHARS)
-      const truncated = (f?.content ?? (typeof f === 'string' ? f : '') ?? '').length > MAX_FILE_CHARS ? '\n…(truncated)' : ''
-      return `--- ${p} ---\n${content}${truncated}`
-    })
-    .join('\n\n')
-    .slice(0, MAX_TOTAL_CHARS)
+  const fileList = fileDigest(files, '', `${step.title} ${step.description}`, 8000, 4000)
 
   const stepsSummary = Array.isArray(allSteps)
     ? allSteps.map((s) => `${s.id}. ${s.title} — ${s.description}`).join('\n')
@@ -1360,7 +1369,7 @@ app.get('/api/preview/bundle/:id/*entry', async (req, res) => {
         build.onResolve({ filter: /.*/ }, (args) => {
           if (args.kind === 'entry-point') return { path: entryNorm, namespace: 'session' }
           if (!args.path.startsWith('.') && !args.path.startsWith('/')) {
-            return { path: args.path, external: true }
+            return { path: /^https?:/.test(args.path) ? args.path : `https://esm.sh/${args.path}`, external: true }
           }
           let resolved
           if (args.path.startsWith('/')) resolved = args.path.slice(1)
