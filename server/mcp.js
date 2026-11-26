@@ -135,6 +135,16 @@ async function postForm(raw, data, asJson = false) {
   } finally { clearTimeout(timer) }
 }
 
+// Checks that our own client page can be read from the internet and says what the other service expects to see
+async function docReachable(u) {
+  try {
+    const r = await fetch(u, { redirect: 'error', signal: AbortSignal.timeout(8000), headers: { Accept: 'application/json' } })
+    if (!r.ok) return false
+    const j = await r.json()
+    return !!j && j.client_id === u && Array.isArray(j.redirect_uris) && j.redirect_uris.length > 0
+  } catch { return false }
+}
+
 async function discover(mcpUrl) {
   const u = new URL(mcpUrl)
   const path = u.pathname.replace(/\/$/, '')
@@ -169,7 +179,12 @@ export function registerOauth(app, guard, origins = []) {
       const selfBase = String(process.env.PUBLIC_API_URL || `https://${req.get('host')}`).replace(/\/+$/, '')
       let rOrigin = ''
       try { rOrigin = new URL(redirectUri).origin } catch { /* checked above */ }
-      if (!clientId && meta.client_id_metadata_document_supported === true && /^https:\/\//.test(selfBase) && origins.includes(rOrigin)) clientId = `${selfBase}/api/mcp/client.json`
+      if (!clientId && meta.client_id_metadata_document_supported === true && /^https:\/\//.test(selfBase) && origins.includes(rOrigin)) {
+        // One small document per app address, so it only lists redirect addresses that belong to that address
+        const docUrl = `${selfBase}/api/mcp/client.json?o=${encodeURIComponent(rOrigin)}`
+        if (await docReachable(docUrl)) clientId = docUrl
+        else if (!meta.registration_endpoint) throw new Error(`The other service cannot read this app's sign-in page (${selfBase}/api/mcp/client.json). Set PUBLIC_API_URL on Render to your Render address and redeploy.`)
+      }
       if (!clientId) {
         if (!meta.registration_endpoint) throw new Error('This server needs you to register your own OAuth client (enter a client ID)')
         const reg = await postForm(meta.registration_endpoint, {
@@ -238,10 +253,14 @@ export default function registerMcp(app, origins = []) {
 
   app.get('/api/mcp/client.json', (req, res) => {
     const base = String(process.env.PUBLIC_API_URL || `https://${req.get('host')}`).replace(/\/+$/, '')
+    const o = String(req.query.o || '')
+    const list = o ? origins.filter((x) => x === o) : origins.filter((x) => x.startsWith('https://'))
+    if (!list.length) return res.status(404).json({ error: 'Unknown app address' })
+    const self = `${base}/api/mcp/client.json${o ? `?o=${encodeURIComponent(o)}` : ''}`
     res.setHeader('Cache-Control', 'public, max-age=300')
     res.json({
-      client_id: `${base}/api/mcp/client.json`, client_name: 'ION Qoders', client_uri: origins.find((o) => o.startsWith('https://')) || base,
-      redirect_uris: origins.map((o) => `${o}/mcp-callback.html`), grant_types: ['authorization_code', 'refresh_token'],
+      client_id: self, client_name: 'ION Qoders', client_uri: list.find((x) => x.startsWith('https://')) || base,
+      redirect_uris: list.map((x) => `${x}/mcp-callback.html`), grant_types: ['authorization_code', 'refresh_token'],
       response_types: ['code'], token_endpoint_auth_method: 'none',
     })
   })
